@@ -1,0 +1,10 @@
+dolphindb==1.30.21.2
+httpx==0.25.0
+joblib==1.1.1
+pandas==1.5.3
+psutil==5.9.0
+psutil==5.9.5
+PyMySQL==1.0.3
+SQLAlchemy==1.4.48
+tqdm==4.65.0
+websockets==11.0.3
