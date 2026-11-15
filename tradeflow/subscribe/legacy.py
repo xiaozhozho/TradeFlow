@@ -7,9 +7,9 @@ import websockets
 import pandas as pd
 from abc import abstractmethod
 
-from .utils.log import get_logger
-from .utils.method import dfApply, ts2Timestamp
-from .setting import (
+from ..utils.log import get_logger
+from ..utils.method import dfApply, ts2Timestamp
+from ..setting import (
     TIMEOUT,
     OKX_API_KEY_SIMULATE, OKX_PASSPHRASE_SIMULATE, OKX_SECRETE_KEY_SIMULATE,
     OKX_API_KEY, OKX_PASSPHRASE, OKX_SECRETE_KEY,

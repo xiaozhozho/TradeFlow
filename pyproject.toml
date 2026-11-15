@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tradeflow"
-version = "3.3.2"
+version = "3.4.0"
 description = "Python 量化交易框架：OKX 行情订阅、DolphinDB 存储与策略调度"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -22,3 +22,6 @@ include = ["tradeflow*"]
 
 [tool.setuptools.package-data]
 "tradeflow.okx" = ["UPSTREAM.md"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]

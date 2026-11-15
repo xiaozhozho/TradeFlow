@@ -105,6 +105,14 @@ EMAIL_REVEIVER = os.getenv("EMAIL_REVEIVER", "")
 # global setting
 TIMEOUT = int(os.getenv("TIMEOUT", "999999"))
 
+# WebSocket 连接行为（TIMEOUT 仅作旧订阅兼容默认值，新代码用 WS_RECV_TIMEOUT）
+WS_RECV_TIMEOUT = int(os.getenv("WS_RECV_TIMEOUT", "30"))        # 单次 recv 超时，超时触发重连
+WS_HEARTBEAT_INTERVAL = int(os.getenv("WS_HEARTBEAT_INTERVAL", "20"))  # 无消息时发 ping 的间隔
+WS_RECONNECT_MAX = int(os.getenv("WS_RECONNECT_MAX", "30"))      # 重连退避上限（秒）
+WS_QUEUE_SIZE = int(os.getenv("WS_QUEUE_SIZE", "200000"))        # StreamWriter 队列容量（行）
+WS_BATCH_SIZE = int(os.getenv("WS_BATCH_SIZE", "200"))           # 写库批量（行）
+WS_FLUSH_INTERVAL = float(os.getenv("WS_FLUSH_INTERVAL", "0.2")) # 写库冲刷间隔（秒）
+
 # stop max loss and profit
 MAX_LOSS = float(os.getenv("MAX_LOSS", "0.3"))
 MAX_PROFIT = float(os.getenv("MAX_PROFIT", "999"))
