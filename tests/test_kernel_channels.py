@@ -11,10 +11,14 @@ class FakeDolphin:
     def __init__(self, *args, **kwargs):
         self.prepared_tables = []
         self.recreate_flags = []
+        self.prepared_engines = []
 
     def prepare_streams(self, table_names, recreate=False):
         self.prepared_tables.extend(table_names)
         self.recreate_flags.append(recreate)
+
+    def prepare_engines(self, engine_names):
+        self.prepared_engines.extend(engine_names)
 
 
 @pytest.fixture
@@ -121,6 +125,9 @@ def test_prepare_streams_required_tables(monkeypatch):
     assert "tradeStreamTable" in tables       # trades
     assert "fundingrateStreamTable" in tables
     assert "algoOrderStreamTable" in tables   # algo=True
+    # 流引擎请求已发出
+    assert {"lastTickAction", "lastCandleAction", "candleIndicatorEngine",
+            "tickIndicatorEngine"} <= set(kernel.dolphin.prepared_engines)
 
 
 # ---------------- RiskManage ----------------
