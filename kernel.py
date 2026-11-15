@@ -4,11 +4,10 @@ from threading import Thread
 
 from .okx.api import Api
 from .risk import RiskManage
-from .utils.log import logger
+from .utils.log import get_logger
 from .utils.email import Email
-from .database.dolphin import Dolphin
+from .stream.dolphin import Dolphin
 from .subscribe import PublicSubscribe,CandleSubscribe,PrivateSubscribe
-from .okx.consts import SIMULATE_PUBLIC_URL, SIMULATE_CANDLE_URL, SIMULATE_PRIVATE_URL
 
 
 class Kernel:
@@ -25,7 +24,7 @@ class Kernel:
         self.pause = pause               # float: 定期运行停顿时间
         self.instIds = instIds           # set:  交易币种的集合
         self.flag = flag                 # flag: 是否模拟
-        self.logger = logger             # logger: 日志记录
+        self.logger = get_logger()       # logger: 日志记录
         self.strategies = []             # list: 策略列表
         self._active = False             # bool: kernel工作状态
         self._loop = asyncio.new_event_loop()  # 订阅的事件循环

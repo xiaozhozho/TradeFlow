@@ -7,10 +7,17 @@ import websockets
 import pandas as pd
 from abc import abstractmethod
 
-from .utils.log import logger
-from .utils.method import ts2Timestamp
-from .setting import TIMEOUT, OKX_API_KEY_SIMULATE,OKX_PASSPHRASE_SIMULATE,OKX_SECRETE_KEY_SIMULATE,OKX_API_KEY,OKX_PASSPHRASE,OKX_SECRETE_KEY
-from .okx.consts import SIMULATE_PUBLIC_URL, SIMULATE_CANDLE_URL, SIMULATE_PRIVATE_URL,REAL_PUBLIC_URL,REAL_CANDLE_URL,REAL_PRIVATE_URL
+from .utils.log import get_logger
+from .utils.method import dfApply, ts2Timestamp
+from .setting import (
+    TIMEOUT,
+    OKX_API_KEY_SIMULATE, OKX_PASSPHRASE_SIMULATE, OKX_SECRETE_KEY_SIMULATE,
+    OKX_API_KEY, OKX_PASSPHRASE, OKX_SECRETE_KEY,
+    SIMULATE_PUBLIC_URL, SIMULATE_CANDLE_URL, SIMULATE_PRIVATE_URL,
+    REAL_PUBLIC_URL, REAL_CANDLE_URL, REAL_PRIVATE_URL,
+)
+
+logger = get_logger()
 
 
 class Subscribe(object):
@@ -27,7 +34,11 @@ class Subscribe(object):
         logger.error(f'<{self.__class__.__name__}>: ERROR:{error}, {msg}')
 
     def onSubscribe(self, packet):
-        event = packet['event']
+        event = packet.get('event')
+        if event == 'notice':
+            # OKX 服务升级/端口迁移等通知（如 64008、64010），不是订阅失败
+            logger.warning(f'<{self.__class__.__name__}>: notice {packet.get("code")}: {packet.get("msg")}')
+            return
         if event == 'subscribe':
             channel = packet['arg']['channel']
             if 'instId' in packet['arg']:
@@ -104,15 +115,16 @@ class PublicSubscribe(Subscribe):
     def onProduct(self, packet):
         if packet['data']:
             data = pd.DataFrame(packet['data'])
-            data = data.applymap(lambda x: x if x else 0)
+            data = dfApply(data, lambda x: x if x else 0)
             data['category'] = data['category'].astype(int)
             data[['ctVal','ctMult','stk','tickSz','lotSz','minSz','maxLmtSz','maxMktSz','maxTwapSz','maxIcebergSz','maxTriggerSz','maxStopSz']] = \
                  data[['ctVal','ctMult','stk','tickSz','lotSz','minSz','maxLmtSz','maxMktSz','maxTwapSz','maxIcebergSz','maxTriggerSz','maxStopSz']].astype(float)
-            data[['listTime', 'expTime']] = data[['listTime', 'expTime']].applymap(ts2Timestamp)
+            data[['listTime', 'expTime']] = dfApply(data[['listTime', 'expTime']], ts2Timestamp)
         
     def onTick(self, packet):
         data = pd.DataFrame(packet['data'])
-        data.iloc[:,2:] = data.iloc[:,2:].astype('float64')
+        # pandas 3 的字符串 dtype 下不能用 iloc 切片回写数值，按列转换 dtype
+        data = data.astype({col: "float64" for col in data.columns[2:]})
         data['ts'] = data['ts'].apply(ts2Timestamp)
         self.kernel.dolphin.data2MemoryTable('tickStreamTable', data)
 
@@ -151,7 +163,7 @@ class PublicSubscribe(Subscribe):
     def onOptSummary(self, packet):
         df = pd.DataFrame(packet['data'])
         df['realVol'] = 0.0
-        df.iloc[:,3:16] = df.iloc[:,3:16].astype(float)
+        df = df.astype({col: float for col in df.columns[3:16]})
         df['fwdPx'] = df['fwdPx'].astype(float)
         df['ts'] = df['ts'].astype('int64')
         self.kernel.dolphin.data2MemoryTable('optsummaryStreamTable', df)
@@ -302,7 +314,7 @@ class PrivateSubscribe(Subscribe):
     def onAccount(self, packet):
         details = packet['data'][0]['details']
         data = pd.DataFrame(details)
-        data = data.applymap(lambda x: 0 if x=='' else x) # 解决值为：'' 的情况
+        data = dfApply(data, lambda x: 0 if x=='' else x) # 解决值为：'' 的情况
         ccy = data['ccy']
         data['ccy'] = 0
         data = data.astype(float)
@@ -313,7 +325,7 @@ class PrivateSubscribe(Subscribe):
     def onPosition(self, packet):
         if packet['data']:
             data = pd.DataFrame(packet['data'])
-            data = data.applymap(lambda x: x if x else 0)
+            data = dfApply(data, lambda x: x if x else 0)
             data['adl'] = data['adl'].astype(int)
             data[['posId', 'tradeId']] = data[['posId', 'tradeId']].astype('int64')
             data[['availPos','avgPx','baseBal','baseBorrowed','baseInterest','bizRefId','bizRefType','closeOrderAlgo',
@@ -326,7 +338,7 @@ class PrivateSubscribe(Subscribe):
                 'liqPenalty','liqPx','margin','markPx','mgnRatio','mmr','notionalUsd','optVal','pendingCloseOrdLiabVal','pnl','pos',
                 'posCcy','quoteBal','quoteBorrowed','quoteInterest','realizedPnl','spotInUseAmt','spotInUseCcy','thetaBS','thetaPA',
                 'upl','uplLastPx','uplRatio','uplRatioLastPx','usdPx','vegaBS','vegaPA']].astype('float64')
-            data[['cTime', 'pTime', 'uTime']] = data[['cTime', 'pTime', 'uTime']].applymap(ts2Timestamp)
+            data[['cTime', 'pTime', 'uTime']] = dfApply(data[['cTime', 'pTime', 'uTime']], ts2Timestamp)
             self.kernel.dolphin.data2MemoryTable('sharePositionTable', data)
             
     def onBalance(self, packet):
@@ -340,10 +352,10 @@ class PrivateSubscribe(Subscribe):
         if packet['data']:
             data = pd.DataFrame(packet['data'])
             data[['amendResult', 'amendSource', 'cancelSource', 'code', 'lever', 'source','algoClOrdId','algoId','attachAlgoClOrdId','clOrdId','ordId','reqId','stpId','tradeId']] = \
-                data[['amendResult', 'amendSource', 'cancelSource', 'code', 'lever', 'source','algoClOrdId','algoId','attachAlgoClOrdId','clOrdId','ordId','reqId','stpId','tradeId']].applymap(lambda x:int(x) if x!='' else 0)
+                dfApply(data[['amendResult', 'amendSource', 'cancelSource', 'code', 'lever', 'source','algoClOrdId','algoId','attachAlgoClOrdId','clOrdId','ordId','reqId','stpId','tradeId']], lambda x:int(x) if x!='' else 0)
             data[['accFillSz','avgPx','fee','fillFee','fillNotionalUsd','fillPnl','fillPx','fillSz','notionalUsd','pnl','px','rebate','slOrdPx','slTriggerPx','sz','tpOrdPx','tpTriggerPx','fillFwdPx','fillMarkPx','fillMarkVol','fillPxUsd','fillPxVol','pxUsd','pxVol']] = \
-                data[['accFillSz','avgPx','fee','fillFee','fillNotionalUsd','fillPnl','fillPx','fillSz','notionalUsd','pnl','px','rebate','slOrdPx','slTriggerPx','sz','tpOrdPx','tpTriggerPx','fillFwdPx','fillMarkPx','fillMarkVol','fillPxUsd','fillPxVol','pxUsd','pxVol']].applymap(lambda x:float(x) if x!='' else 0)
-            data[['cTime', 'fillTime', 'uTime']] = data[['cTime', 'fillTime', 'uTime']].applymap(ts2Timestamp)
+                dfApply(data[['accFillSz','avgPx','fee','fillFee','fillNotionalUsd','fillPnl','fillPx','fillSz','notionalUsd','pnl','px','rebate','slOrdPx','slTriggerPx','sz','tpOrdPx','tpTriggerPx','fillFwdPx','fillMarkPx','fillMarkVol','fillPxUsd','fillPxVol','pxUsd','pxVol']], lambda x:float(x) if x!='' else 0)
+            data[['cTime', 'fillTime', 'uTime']] = dfApply(data[['cTime', 'fillTime', 'uTime']], ts2Timestamp)
             self.kernel.dolphin.data2MemoryTable('orderStreamTable', data)
 
     def onTrade(self, packet):
@@ -363,7 +375,7 @@ class PrivateSubscribe(Subscribe):
                   data[['availPos','avgPx','deltaBS', 'deltaPA','gammaBS','gammaPA','imr','interest',
                   'last','lever','liab','liqPx','markPx','margin','mgnRatio','mmr','notionalUsd',
                   'optVal','pos','thetaBS','thetaPA','upl','uplRatio','vegaBS','vegaPA']].astype(float)
-            data[['cTime', 'pTime', 'uTime']] = data[['cTime', 'pTime', 'uTime']].applymap(ts2Timestamp)
+            data[['cTime', 'pTime', 'uTime']] = dfApply(data[['cTime', 'pTime', 'uTime']], ts2Timestamp)
             self.kernel.dolphin.data2MemoryTable('shareWarningTable', data)
 
     async def run(self):

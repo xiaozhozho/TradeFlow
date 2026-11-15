@@ -6,18 +6,26 @@ from datetime import datetime, timedelta
 
 from ..okx.PublicData import PublicAPI
 from ..okx.MarketData import MarketAPI
-from .log import logger
-from quant.database.dolphin import df2Table, runScript
+from .log import get_logger
+from ..stream.dolphin import Dolphin
 from ..setting import OKX_API_KEY, OKX_SECRETE_KEY,OKX_PASSPHRASE
 
-public = PublicAPI(OKX_API_KEY, OKX_SECRETE_KEY, OKX_PASSPHRASE, False, flag='0', debug=False)
-market = MarketAPI(OKX_API_KEY, OKX_SECRETE_KEY, OKX_PASSPHRASE, False, flag='0', debug=False)
+logger = get_logger()
+
+public = PublicAPI(OKX_API_KEY or '-1', OKX_SECRETE_KEY or '-1', OKX_PASSPHRASE or '-1', flag='0', debug=False)
+market = MarketAPI(OKX_API_KEY or '-1', OKX_SECRETE_KEY or '-1', OKX_PASSPHRASE or '-1', flag='0', debug=False)
 
 
 def datetime_to_ts(dt):
     """将datetime格式日期转换成ts"""
     timestamp = datetime.timestamp(dt) * 1000 
     return int(timestamp)
+
+def dfApply(df: pd.DataFrame, func):
+    """DataFrame 逐元素映射，兼容 pandas 1.x(applymap) 与 2.1+/3.x(map)。"""
+    if hasattr(df, "map"):
+        return df.map(func)
+    return df.applymap(func)
 
 def ts2Timestamp(ts: int) -> None:
     """unix 时间转换成timestamp"""
@@ -49,7 +57,7 @@ def get_swap_candle_start_dict():
     swap_start = dict(exec instId from start, exec datetime(ts) as datetime from start)
     swap_start
     """
-    swap_start_dict = runScript(script)
+    swap_start_dict = Dolphin().runScript(script)
     return swap_start_dict
 
 def supply_swap_data():
@@ -65,7 +73,7 @@ def supply_swap_data():
             end = data_start.item() - delta1min
             df = get_minute_candle(instId, end)
             if df is not None and len(df)>0:
-                df2Table(dbPath, tableName, df)
+                Dolphin().df2Table(dbPath, tableName, df)
                 print(f'Data success for {instId}, number:{len(df)}')
             else:
                 logger.info(f'No data for {instId}')

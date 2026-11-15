@@ -47,3 +47,12 @@
 ## version 3.1.1
 
 - 修复log.py 在Linux 和 win32 效果差异不同的问题
+
+## version 3.2.0
+
+- okx 模块同步上游 python-okx 0.4.4（commit 06bb8a9），保留目录名 `okx`；
+- 新增 `okx/api.py` 聚合层，适配上游拆分式 API 类（新增 Affiliate/CopyTrading/DualInvest/SpreadTrading）；
+- WebSocket 地址迁移至 443 端口（OKX 已于 2026-10-31 停用 8443），并处理 `notice` 服务通知；
+- 修复 pandas 3 兼容性：`applymap` 替换为 `dfApply`，避免字符串 dtype 下 `iloc` 回写数值报错；
+- 新增 `OKX_FORCE_IPV4` 开关（默认开启，仅对 OKX 域名使用 IPv4；IPv6 正常的环境可设为 `0` 关闭）；
+- 日志目录改为相对项目根目录并自动创建，不再依赖启动时的工作目录。

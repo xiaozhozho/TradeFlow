@@ -1,0 +1,23 @@
+# ---------- 敏感信息（务必不要提交） ----------
+.env
+.env.*
+!.env.example
+
+# ---------- Python ----------
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+venv/
+.venv/
+
+# ---------- 日志与运行产物 ----------
+*.log
+log/
+
+# ---------- 系统与 IDE ----------
+.DS_Store
+.idea/
+.vscode/

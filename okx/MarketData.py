@@ -1,11 +1,11 @@
-from .client import Client
+from .okxclient import OkxClient
 from .consts import *
 
 
-class MarketAPI(Client):
+class MarketAPI(OkxClient):
 
-    def __init__(self, api_key='-1', api_secret_key='-1', passphrase='-1', use_server_time=False, flag='1', domain = 'https://www.okx.com',debug = True):
-        Client.__init__(self, api_key, api_secret_key, passphrase, use_server_time, flag, domain,debug)
+    def __init__(self, api_key='-1', api_secret_key='-1', passphrase='-1', use_server_time=None, flag='1', domain = 'https://www.okx.com',debug = False, proxy=None):
+        OkxClient.__init__(self, api_key, api_secret_key, passphrase, use_server_time, flag, domain, debug, proxy)
 
 
     # Get Tickers
@@ -30,6 +30,11 @@ class MarketAPI(Client):
     def get_orderbook(self, instId, sz=''):
         params = {'instId': instId, 'sz': sz}
         return self._request_with_params(GET, ORDER_BOOKS, params)
+
+    # Get RPI Order Book
+    def get_rpi_orderbook(self, instId, sz=''):
+        params = {'instId': instId, 'sz': sz}
+        return self._request_with_params(GET, MARKET_BOOKS_RPI, params)
 
     # Get Candlesticks
     def get_candlesticks(self, instId, after='', before='', bar='', limit=''):
@@ -60,10 +65,6 @@ class MarketAPI(Client):
     def get_volume(self):
         return self._request_without_params(GET, VOLUMNE)
 
-    # Get Oracle
-    def get_oracle(self):
-        return self._request_without_params(GET, ORACLE)
-
     # Get Tier
     def get_tier(self, instType='', tdMode='', uly='', instId='', ccy='', tier=''):
         params = {'instType': instType, 'tdMode': tdMode, 'uly': uly, 'instId': instId, 'ccy': ccy, 'tier': tier}
@@ -75,6 +76,7 @@ class MarketAPI(Client):
             'index':index
         }
         return self._request_with_params(GET,INDEX_COMPONENTS,param)
+
 
     #GET /api/v5/market/exchange-rate
     def get_exchange_rate(self):
@@ -113,6 +115,20 @@ class MarketAPI(Client):
             'instId':instId
         }
         return self._request_with_params(GET, BLOCK_TRADES, params)
+
+    #- Get order lite book
+    def get_order_lite_book(self,instId = ''):
+        params = {
+            'instId':instId
+        }
+        return self._request_with_params(GET, GET_ORDER_LITE_BOOK, params)
+
+    #- Get option trades
+    def get_option_trades(self,instFamily = ''):
+        params = {
+            'instFamily':instFamily
+        }
+        return self._request_with_params(GET, GET_OPTION_TRADES, params)
 
 
 

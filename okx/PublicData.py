@@ -1,11 +1,11 @@
-from .client import Client
+from .okxclient import OkxClient
 from .consts import *
 
 
-class PublicAPI(Client):
+class PublicAPI(OkxClient):
 
-    def __init__(self, api_key='-1', api_secret_key='-1', passphrase='-1', use_server_time=False, flag='1', domain = 'https://www.okx.com',debug = True):
-        Client.__init__(self, api_key, api_secret_key, passphrase, use_server_time, flag, domain,debug)
+    def __init__(self, api_key='-1', api_secret_key='-1', passphrase='-1', use_server_time=None, flag='1', domain = 'https://www.okx.com',debug = False, proxy=None):
+        OkxClient.__init__(self, api_key, api_secret_key, passphrase, use_server_time, flag, domain, debug, proxy)
 
     # Get Instruments
     def get_instruments(self, instType, uly='', instId='',instFamily = ''):
@@ -55,13 +55,6 @@ class PublicAPI(Client):
     # Get System Time
     def get_system_time(self):
         return self._request_without_params(GET, SYSTEM_TIME)
-
-    # Get Liquidation Orders
-    def get_liquidation_orders(self, instType, mgnMode='', instId='', ccy='', uly='', alias='', state='', before='',
-                               after='', limit='',instFamily =''):
-        params = {'instType': instType, 'mgnMode': mgnMode, 'instId': instId, 'ccy': ccy, 'uly': uly,
-                  'alias': alias, 'state': state, 'before': before, 'after': after, 'limit': limit,'instFamily':instFamily}
-        return self._request_with_params(GET, LIQUIDATION_ORDERS, params)
 
     # Get Mark Price
     def get_mark_price(self, instType, uly='', instId='',instFamily = ''):
@@ -113,5 +106,39 @@ class PublicAPI(Client):
         }
         return self._request_with_params(GET, CONVERT_CONTRACT_COIN, params)
 
+    # Get option tickBands
+    def get_option_tickBands(self, instType='', instFamily=''):
+        params = {
+            'instType': instType,
+            'instFamily': instFamily
+        }
+        return self._request_with_params(GET, GET_OPTION_TICKBANDS, params)
 
+    # Get option trades
+    def get_option_trades(self, instId='', instFamily='', optType=''):
+        params = {
+            'instId': instId,
+            'instFamily': instFamily,
+            'optType': optType
+        }
+        return self._request_with_params(GET, GET_OPTION_TRADES, params)
 
+    # Get historical market data
+    def get_market_data_history(self, module, instType, dateAggrType, begin, end, instIdList=None, instFamilyList=None):
+        params = {
+            'module': module,
+            'instType': instType,
+            'dateAggrType': dateAggrType,
+            'begin': begin,
+            'end': end
+        }
+        if instIdList is not None:
+            params['instIdList'] = instIdList
+        if instFamilyList is not None:
+            params['instFamilyList'] = instFamilyList
+        return self._request_with_params(GET, MARKET_DATA_HISTORY, params)
+
+    # Get announcements (BROK-1730)
+    def get_announcements(self, annType='', page=''):
+        params = {'annType': annType, 'page': page}
+        return self._request_with_params(GET, ANNOUNCEMENTS, params)

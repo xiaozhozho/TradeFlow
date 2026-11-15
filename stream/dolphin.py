@@ -3,10 +3,8 @@ import dolphindb as ddb
 from pandas import DataFrame
 from functools import lru_cache
 import dolphindb.settings as keys
-from ..utils.log import logger
-from ..utils.decorator import timeit   
-from .script import * 
-from ..setting import DOLPHINDB_HOST,DOLPHINDB_PORT,DOLPHINDB_USER,DOLPHINDB_PASSWORD,TIMEOUT
+from .script import *
+from ..setting import DOLPHINDB_HOST,DOLPHINDB_PORT,DOLPHINDB_USER,DOLPHINDB_PASSWORD
 
 class Dolphin:
     """DolphinDB 数据库管理类,为了避免多个session的切换,考虑使用单例模式"""
@@ -20,16 +18,20 @@ class Dolphin:
         self.port = port 
         self.userid = userid
         self.password = password
-        self.session = ddb.session(userid=userid, password=password, enableASYNC=False)
-        self.session.connect(host=host, port=port, keepAliveTime=TIMEOUT, reconnect=True)
-        self.asyncSession = ddb.session(userid=userid, password=password, enableASYNC=True)
-        self.asyncSession.connect(host=host, port=port, keepAliveTime=TIMEOUT, reconnect=True)
+        # 注1：新版客户端的 keepAliveTime 单位为秒且有上限，不能传 TIMEOUT(999999)，
+        #      使用客户端默认的网络超时即可；TIMEOUT 仅用于 WebSocket 订阅。
+        # 注2：凭据必须在 connect() 时传入，只传给构造函数无效，
+        #      否则会话会以 guest(匿名) 身份登录，建库等操作会报 NotAuthenticated。
+        self.session = ddb.session(enableASYNC=False)
+        self.session.connect(host=host, port=port, userid=userid, password=password, reconnect=True)
+        self.asyncSession = ddb.session(enableASYNC=True)
+        self.asyncSession.connect(host=host, port=port, userid=userid, password=password, reconnect=True)
 
     @lru_cache()
     def getSession(self, enableAsync=False, isCompress=False, highAvailability=False):
         """ 获取session  """
         session = ddb.session(enableASYNC=enableAsync, compress=isCompress, highAvailability=highAvailability, highAvailabilitySites=['localhost:8848'])
-        session.connect("localhost", 8848, "admin", "***REMOVED***")
+        session.connect(self.host, self.port, self.userid, self.password)
         return session
 
     def upload(self, var, aliasName):

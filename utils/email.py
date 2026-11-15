@@ -1,10 +1,12 @@
 import smtplib
-from .log import logger
+from .log import get_logger
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.image import MIMEImage
 
-from ..setting import EMAIL_SERVER, EMAIL_PORT,EMAIL_SENDER,EMAIL_PASSWORD,EMAIL_REVEIVER,EMAIL_USERNAME
+from ..setting import EMAIL_SERVER,EMAIL_PORT,EMAIL_SENDER,EMAIL_PASSWORD,EMAIL_REVEIVER,EMAIL_USERNAME
+
+logger = get_logger()
 
 
 class Email:
@@ -56,6 +58,4 @@ class Email:
             server.quit()
             print(f"Send image email to {self.receiver} success!")
         except smtplib.SMTPException as e:
-            logger(f"<Email>: ERROR:{e}")
-
-
+            logger.info(f"<Email>: ERROR:{e}")

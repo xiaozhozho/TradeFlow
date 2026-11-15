@@ -1,8 +1,8 @@
-dolphindb==1.30.21.2
-httpx==0.25.0
+dolphindb==3.0.6.2
+httpx[http2]>=0.24.0
 joblib==1.1.1
+loguru>=0.7.0
 pandas==1.5.3
-psutil==5.9.0
 psutil==5.9.5
 PyMySQL==1.0.3
 SQLAlchemy==1.4.48
