@@ -30,18 +30,20 @@ class Strategy:
         ticks = self.kernel.dolphin.runScript('shareTickTable').set_index('instId').T.to_dict()
         return ticks
 
-    def getCandleIndicator(self, limit=60):
-        """获取K线指标"""
+    def getCandleIndicator(self, limit=60, channel='candle1m'):
+        """获取K线指标（按频道过滤，默认 1 分钟）"""
         script = f"""
-        with temp as (select * from candleIndicatorStreamTable context by instId csort ts desc limit {limit}) select * from temp order by ts
+        with temp as (select * from candleIndicatorStreamTable where channel='{channel}' context by instId csort ts desc limit {limit}) select * from temp order by ts
         """
         data = self.kernel.dolphin.runScript(script).drop_duplicates(subset=['ts','instId'], keep='last')
         candleIndicator = Indicator(data, limit)
         return candleIndicator
 
-    def getLastCandleIndicators(self):
+    def getLastCandleIndicators(self, channel='candle1m'):
         """ 获取k线级别的最新指标 """
-        lastCandleIndicator = self.kernel.dolphin.runScript('shareCandleIndicatorTable').set_index('instId').T.to_dict()
+        lastCandleIndicator = self.kernel.dolphin.runScript(
+            f"select * from shareCandleIndicatorTable where channel='{channel}'"
+        ).set_index('instId').T.to_dict()
         return lastCandleIndicator
     
     def getLastTickIndicators(self):

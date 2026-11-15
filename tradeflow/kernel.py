@@ -190,22 +190,12 @@ class Kernel:
             self._cleanup_engines_before_recreate()
         tables = set(CORE_TABLES) | tables_for(self.enabled_channels())
         self.dolphin.prepare_streams(tables, recreate=self.recreate_tables)
-        try:
-            from .stream.engines import ENGINE_NAMES
-        except ImportError:
-            # stream.engines 属于后续任务，未就绪时跳过引擎创建
-            self.logger.warning('<Kernel>: stream.engines 未实现，跳过流引擎创建')
-        else:
-            self.dolphin.prepare_engines(ENGINE_NAMES)
+        from .stream.engines import ENGINE_NAMES
+        self.dolphin.prepare_engines(ENGINE_NAMES)
 
     def _cleanup_engines_before_recreate(self):
         """重建流表前先摘除引擎订阅，否则活跃订阅会阻塞 dropStreamTable。"""
-        try:
-            from .stream.engines import ENGINE_SPECS
-        except ImportError:
-            # engines 未实现：清理旧版遗留订阅
-            self.dolphin.unsubscribeTable('tickStreamTable', 'lastTickAction')
-            return
+        from .stream.engines import ENGINE_SPECS
         for spec in ENGINE_SPECS.values():
             self.dolphin.unsubscribeTable(spec.source, spec.action)
             self.dolphin.dropStreamEngine(spec.name)

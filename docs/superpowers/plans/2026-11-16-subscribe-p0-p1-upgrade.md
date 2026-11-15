@@ -435,11 +435,18 @@ TICK_INDICATOR = TableSpec(
 |---|---|---|---|---|
 | `lastTickAction` | `subscribeTable` + `tableInsert` | `tickStreamTable` | `shareTickTable` | 最新 ticker |
 | `lastCandleAction` | `subscribeTable` + `tableInsert` | `candleStreamTable` | `shareCandleTable` | 最新 K 线（含未完成） |
-| `candleIndicatorEngine` | `createReactiveStateEngine` | `candleConfirmStreamTable` | `candleIndicatorStreamTable` | K 线均线/MACD/波动 |
-| `tickIndicatorEngine` | `createTimeSeriesEngine` | `tickStreamTable` | `tickIndicatorStreamTable` | 5 分钟活跃度/价格区间 |
 | `lastOrderAction` | `subscribeTable` + `tableInsert` | `orderStreamTable` | `shareOrderTable` | 最新订单状态 |
 | `lastAlgoOrderAction` | `subscribeTable` + `tableInsert` | `algoOrderStreamTable` | `shareAlgoOrderTable` | 最新策略单状态 |
 | `lastAccountGreeksAction` | `subscribeTable` + `tableInsert` | `accountGreeksStreamTable` | `shareAccountGreeksTable` | 最新 Greeks |
+| `lastCandleIndicatorAction` | `subscribeTable` + `tableInsert` | `candleIndicatorStreamTable` | `shareCandleIndicatorTable` | 最新 K 线指标快照 |
+| `lastTickIndicatorAction` | `subscribeTable` + `tableInsert` | `tickIndicatorStreamTable` | `shareTickIndicatorTable` | 最新 tick 活跃度快照 |
+| `candleIndicatorEngine` | `createReactiveStateEngine` | `candleConfirmStreamTable` | `candleIndicatorStreamTable` | K 线均线/MACD/波动 |
+| `tickIndicatorEngine` | `createTimeSeriesEngine` | `tickStreamTable` | `tickIndicatorStreamTable` | 5 分钟活跃度/价格区间 |
+
+> 生命周期约束（实测验证）：**重建流表之前必须先摘除引擎订阅**——响应式状态
+> 引擎持有其输出表引用，活跃订阅会阻塞 `dropStreamTable`。`Kernel.prepare()`
+> 在 `recreate_tables=True` 时先对 `ENGINE_SPECS` 全量 `unsubscribeTable` +
+> `dropStreamEngine`，再建表，最后重建引擎。
 
 ### 5.2 K 线指标引擎
 
@@ -2403,21 +2410,52 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def test_stream_tables_and_engines():
+def test_stream_tables_engines_and_dataflow():
     from tradeflow.stream.dolphin import Dolphin
+    from tradeflow.stream.engines import ENGINE_SPECS
     from tradeflow.stream.schema import STREAM_TABLES
 
-    # 该测试会 drop/recreate 全部流表，必须指向独立测试实例，
-    # 不要对 strategy/example.py 正在使用的库执行。
+    # 该测试会 drop/recreate 全部流表，必须指向独立测试实例。
+    # 关键顺序（实测）：先摘除引擎订阅，再建表，最后重建引擎——
+    # 引擎持有输出表引用，活跃订阅会阻塞 dropStreamTable。
     d = Dolphin()
+    for spec in ENGINE_SPECS.values():
+        d.unsubscribeTable(spec.source, spec.action)
+        d.dropStreamEngine(spec.name)
     d.prepare_streams(STREAM_TABLES.keys(), recreate=True)
-    d.prepare_engines(("lastTickAction", "lastCandleAction", "candleIndicatorEngine", "tickIndicatorEngine"))
+    d.prepare_engines((
+        "lastTickAction", "lastCandleAction",
+        "candleIndicatorEngine", "tickIndicatorEngine",
+        "lastTickIndicatorAction", "lastCandleIndicatorAction",
+    ))
     time.sleep(1)
+
+    # 表与快照表存在
     assert d.runScript("existsStreamTable(`tickStreamTable)") is True
     assert d.runScript("defined(`shareCandleIndicatorTable, SHARED)") is True
-    workers = d.runScript("getStreamingStat().subWorkers")
-    assert len(workers) >= 4
+    # 订阅注册在 getStreamingStat().pubTables（actions 列）
+    pubs = d.runScript("getStreamingStat().pubTables")
+    assert {"lastTickAction", "lastCandleAction", "candleIndicatorAction",
+            "tickIndicatorAction"} <= set(pubs["actions"])
+
+    # 响应式状态引擎：插入 confirm=1 的 K 线，断言 ma5 输出（minPeriods=1 首根即出值）
+    d.runScript("""
+    insert into candleConfirmStreamTable values(2024.01.01T00:01:00.000, 1, 2, 0.5, 1.5, 10, 10, 15, 1, "BTC-USDT-SWAP", "candle1m")
+    insert into candleConfirmStreamTable values(2024.01.01T00:02:00.000, 1.5, 2.5, 1, 2, 11, 11, 16, 1, "BTC-USDT-SWAP", "candle1m")
+    insert into candleConfirmStreamTable values(2024.01.01T00:03:00.000, 2, 3, 1.5, 2.5, 12, 12, 17, 1, "BTC-USDT-SWAP", "candle1m")
+    """)
+    time.sleep(2)
+    ind = d.runScript("select * from candleIndicatorStreamTable order by ts")
+    assert len(ind) == 3
+    assert ind.loc[0, "ma5"] == pytest.approx(1.5)
+    assert list(ind.columns[:4]) == ["instId", "channel", "ts", "ma5"]
+
+    # 时间序列引擎与快照动作断言见 tests/integration/test_stream_schema.py 完整版
 ```
+
+> 集成测试另含：`lastCandleAction` 快照断言、tick 5 分钟窗口输出断言
+> （`useWindowStartTime=false` 输出窗口结束时间）、`shareTickTable` 单行最新、
+> `shareTickIndicatorTable` 等于最新窗口（而非聚合窗口）。
 
 - [ ] **Step 2: 运行并确认失败**
 
