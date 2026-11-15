@@ -8,6 +8,7 @@ from .utils.log import get_logger
 from .utils.email import Email
 from .stream.dolphin import Dolphin
 from .subscribe import PublicSubscribe,CandleSubscribe,PrivateSubscribe,SubscribeManager
+from .subscribe.reconcile import Reconciler
 from .subscribe.channels import (
     DEFAULT_ALGO_CHANNELS,
     DEFAULT_CANDLE_CHANNELS,
@@ -63,7 +64,7 @@ class Kernel:
         self.options_enabled = options   # bool: 期权频道
         self.algo_enabled = algo         # bool: 策略委托频道
         self.recreate_tables = recreate_tables  # bool: 重建流表
-        self.reconciler = None           # Reconciler: 断线对账（后续任务接入）
+        self.reconciler = Reconciler(self)   # Reconciler: 断线对账（REST 快照覆盖 + K 线补齐）
         self.manager = None              # SubscribeManager: 订阅编排
         self.logger = get_logger()       # logger: 日志记录
         self.strategies = []             # list: 策略列表
