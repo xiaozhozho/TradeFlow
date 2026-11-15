@@ -15,6 +15,10 @@ from .market import (
     parse_open_interest, parse_option_trades, parse_opt_summary,
     parse_price_limit, parse_status, parse_tickers, parse_trades,
 )
+from .private import (
+    parse_account, parse_account_greeks, parse_algo_order, parse_balance,
+    parse_fills, parse_liquidation_warning, parse_orders, parse_positions,
+)
 
 logger = get_logger()
 
@@ -51,6 +55,17 @@ HANDLERS = {
     "status": parse_status,
     "instruments": parse_instruments,
     "candle": parse_candle,
+    # 私有频道
+    "account": parse_account,
+    "positions": parse_positions,
+    "orders": parse_orders,
+    "fills": parse_fills,
+    "balance_and_position": parse_balance,
+    "liquidation-warning": parse_liquidation_warning,
+    "account-greeks": parse_account_greeks,
+    # 策略单（business-private 端点）
+    "orders-algo": parse_algo_order,
+    "algo-advance": parse_algo_order,
 }
 
 
