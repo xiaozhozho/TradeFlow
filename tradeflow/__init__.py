@@ -2,10 +2,10 @@
 TradeFlow：Python 量化交易框架，可作为第三方包导入使用。
 
 Author: Mr:xzz
-version: 3.3.0
+version: 3.3.1
 """
 
-__version__ = "3.3.0"
+__version__ = "3.3.1"
 
 from .setting import OKX_FORCE_IPV4
 
@@ -14,7 +14,7 @@ if OKX_FORCE_IPV4:
 
     prefer_ipv4_for_okx()
 
-__all__ = ["Kernel", "Strategy", "__version__"]
+__all__ = ["Kernel", "Strategy", "get_logger", "__version__"]
 
 
 def __getattr__(name: str):
@@ -27,4 +27,8 @@ def __getattr__(name: str):
         from .strategy import Strategy
 
         return Strategy
+    if name == "get_logger":
+        from .utils.log import get_logger
+
+        return get_logger
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

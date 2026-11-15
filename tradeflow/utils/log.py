@@ -1,29 +1,59 @@
+"""日志工具：日志文件按调用脚本命名，并放在脚本同目录的 log/ 下。"""
+import inspect
 import logging
 import os
 from logging import FileHandler, StreamHandler
-from datetime import datetime
 from pathlib import Path
 
+_PACKAGE_ROOT = Path(__file__).resolve().parents[1]
+_IGNORED_MODULES = ("importlib", "runpy")
 
-def _resolve_log_dir() -> Path:
-    """日志目录：TRADEFLOW_LOG_DIR > 源码仓库根目录/log > 当前工作目录/log。"""
+
+def _is_ignored_module(module: str) -> bool:
+    return any(module == name or module.startswith(f"{name}.") for name in _IGNORED_MODULES)
+
+
+def _caller_script() -> Path | None:
+    """定位调用 get_logger 的用户脚本。
+
+    跳过 tradeflow 包内部帧与导入机制，例如：
+    - test.py 中直接调用 -> 返回 test.py；
+    - Kernel 内部调用 -> 继续向上找到实例化 Kernel 的脚本。
+    """
+    frame = inspect.currentframe()
+    try:
+        frame = frame.f_back
+        while frame is not None:
+            module = frame.f_globals.get("__name__", "")
+            filename = frame.f_globals.get("__file__")
+            if filename and not str(filename).startswith("<") and not _is_ignored_module(module):
+                path = Path(filename).resolve()
+                if not path.is_relative_to(_PACKAGE_ROOT):
+                    return path
+            frame = frame.f_back
+    finally:
+        del frame
+    return None
+
+
+def _log_file() -> Path:
+    """日志路径：TRADEFLOW_LOG_DIR（若设置）或 <脚本目录>/log/<脚本名>.log。"""
+    script = _caller_script()
     override = os.getenv("TRADEFLOW_LOG_DIR")
     if override:
-        return Path(override).expanduser()
-    repo_root = Path(__file__).resolve().parents[2]
-    if (repo_root / "pyproject.toml").is_file() or (repo_root / ".git").exists():
-        return repo_root / "log"
-    return Path.cwd() / "log"
-
-
-LOG_DIR = _resolve_log_dir()
+        directory = Path(override).expanduser()
+    elif script is not None:
+        directory = script.parent / "log"
+    else:
+        directory = Path.cwd() / "log"
+    name = script.stem if script is not None else "main"
+    return directory / f"{name}.log"
 
 
 def get_logger():
-    today = datetime.now().strftime("%Y-%m-%d")
-    # 日志固定写入项目根目录的 log/，不依赖启动时的工作目录
-    LOG_DIR.mkdir(parents=True, exist_ok=True)
-    filename = str(LOG_DIR / f'{today}.log')
+    log_path = _log_file()
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    filename = str(log_path)
     # FileHandler和StreamHandler分别对应将日志输出到文档、控制台
     logger = logging.getLogger(filename)  # 创建logger对象
     if logger.handlers:  # 已初始化过，避免重复添加 handler
@@ -43,4 +73,3 @@ def get_logger():
     logger.addHandler(console)
 
     return logger
-

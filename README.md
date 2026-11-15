@@ -70,7 +70,7 @@ TradeFlow/
 - `.env` 查找顺序：`TRADEFLOW_ENV_FILE` 指定路径 → 当前工作目录 → 包目录 → 源码仓库根目录；
 - 真实环境变量优先级最高，`.env` 不会覆盖已存在的环境变量；
 - 配置模板见 `.env.example`，复制为 `.env` 后填写；
-- 日志默认写入仓库根目录 `log/`（安装后写入当前工作目录 `log/`），可用 `TRADEFLOW_LOG_DIR` 覆盖。
+- 日志默认写入调用脚本同目录的 `log/` 下，文件名为脚本名（如 `test.py` → `log/test.log`）；可用 `TRADEFLOW_LOG_DIR` 覆盖日志根目录。
 
 ## 版本记录
 
@@ -135,3 +135,9 @@ TradeFlow/
 - 新增 `pyproject.toml` 打包配置与 `.env.example` 环境变量模板；
 - `.env` 支持从当前目录、包目录、仓库根目录查找，并可用 `TRADEFLOW_ENV_FILE` 指定；
 - 日志目录支持 `TRADEFLOW_LOG_DIR` 覆盖，源码模式下仍写入仓库根目录 `log/`。
+
+## version 3.3.1
+
+- 日志改为按调用脚本定位：在脚本同目录创建 `log/`，并写入与脚本同名的日志文件（如 `test.py` → `log/test.log`）；
+- `get_logger` 支持从 `tradeflow` 顶层直接导入；
+- `TRADEFLOW_LOG_DIR` 仍可用于覆盖日志根目录。
