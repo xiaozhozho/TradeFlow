@@ -1228,7 +1228,7 @@ python -m strategy.example
 - Modify: `tradeflow/utils/__init__.py`
 - Modify: `tradeflow/utils/method.py`
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```python
 # tests/test_format.py
@@ -1255,12 +1255,12 @@ def test_align_frame_orders_and_casts():
     assert out.loc[0, "b"] == 2
 ```
 
-- [ ] **Step 2: 运行并确认失败**
+- [x] **Step 2: 运行并确认失败**
 
 Run: `pytest tests/test_format.py -q`
 Expected: `ModuleNotFoundError: No module named 'tradeflow.utils.format'`
 
-- [ ] **Step 3: 实现 `format.py`**
+- [x] **Step 3: 实现 `format.py`**
 
 ```python
 # tradeflow/utils/format.py
@@ -1347,12 +1347,12 @@ __all__ = ["align_frame", "as_float", "as_int", "json_dumps", "ts2Timestamp"]
 from .format import ts2Timestamp
 ```
 
-- [ ] **Step 4: 运行测试**
+- [x] **Step 4: 运行测试**
 
 Run: `pytest tests/test_format.py -q`
 Expected: `3 passed`
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add tradeflow/utils/format.py tradeflow/utils/__init__.py tradeflow/utils/method.py tests/test_format.py
@@ -1368,7 +1368,7 @@ git commit -m "feat: 统一订阅数据格式化工具"
 - Create: `tests/test_schema.py`
 - Modify: `tradeflow/stream/script.py`
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```python
 # tests/test_schema.py
@@ -1404,12 +1404,12 @@ def test_create_script_is_idempotent():
     assert "enableTableShareAndPersistence" in script
 ```
 
-- [ ] **Step 2: 运行并确认失败**
+- [x] **Step 2: 运行并确认失败**
 
 Run: `pytest tests/test_schema.py -q`
 Expected: `ModuleNotFoundError: No module named 'tradeflow.stream.schema'`
 
-- [ ] **Step 3: 实现 `TableSpec` 与全部表**
+- [x] **Step 3: 实现 `TableSpec` 与全部表**
 
 把第 4.2 节的 `TableSpec`/`Column`/`cols` 原样写入 `schema.py`，然后：
 
@@ -1425,12 +1425,12 @@ createCandleStreamTableScript = STREAM_TABLES["candleStreamTable"].create_script
 # ... 其余表同理
 ```
 
-- [ ] **Step 4: 运行测试**
+- [x] **Step 4: 运行测试**
 
 Run: `pytest tests/test_schema.py -q`
 Expected: `3 passed`
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add tradeflow/stream/schema.py tradeflow/stream/script.py tests/test_schema.py
@@ -1446,7 +1446,7 @@ git commit -m "feat: 建立 DolphinDB 流表结构注册表"
 - Create: `tests/test_dolphin_scripts.py`
 - Create: `tests/integration/test_stream_schema.py`
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```python
 # tests/test_dolphin_scripts.py
@@ -1459,12 +1459,12 @@ def test_ensure_script_recreate_contains_drop():
     assert "existsStreamTable(`tickStreamTable)" in script
 ```
 
-- [ ] **Step 2: 运行并确认失败**
+- [x] **Step 2: 运行并确认失败**
 
 Run: `pytest tests/test_dolphin_scripts.py -q`
 Expected: `AssertionError`（`drop_script` 尚未接入）
 
-- [ ] **Step 3: 修改 `Dolphin`**
+- [x] **Step 3: 修改 `Dolphin`**
 
 ```python
 import threading
@@ -1538,12 +1538,12 @@ def createTickStreamTable(self, existDrop=True):
     self.prepare_streams(["tickStreamTable"], recreate=existDrop)
 ```
 
-- [ ] **Step 4: 运行测试**
+- [x] **Step 4: 运行测试**
 
 Run: `pytest tests/test_dolphin_scripts.py -q`
 Expected: `1 passed`
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add tradeflow/stream/dolphin.py tests/test_dolphin_scripts.py
@@ -1559,7 +1559,7 @@ git commit -m "feat: DolphinDB 幂等建表与独立 session"
 - Create: `tradeflow/subscribe/handlers/market.py`
 - Create: `tests/test_handlers_market.py`
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```python
 # tests/test_handlers_market.py
@@ -1610,12 +1610,12 @@ def test_liquidation_all_details():
     assert len(batches[0].frame) == 2
 ```
 
-- [ ] **Step 2: 运行并确认失败**
+- [x] **Step 2: 运行并确认失败**
 
 Run: `pytest tests/test_handlers_market.py -q`
 Expected: `ModuleNotFoundError`
 
-- [ ] **Step 3: 实现 `market.py`**
+- [x] **Step 3: 实现 `market.py`**
 
 ```python
 # tradeflow/subscribe/handlers/market.py
@@ -1792,12 +1792,12 @@ HANDLERS = {
 }
 ```
 
-- [ ] **Step 4: 运行测试**
+- [x] **Step 4: 运行测试**
 
 Run: `pytest tests/test_handlers_market.py -q`
 Expected: `3 passed`
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add tradeflow/subscribe/handlers tests/test_handlers_market.py
@@ -1812,7 +1812,7 @@ git commit -m "feat: 公共行情频道解析"
 - Create: `tradeflow/subscribe/handlers/private.py`
 - Create: `tests/test_handlers_private.py`
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```python
 # tests/test_handlers_private.py
@@ -1858,12 +1858,12 @@ def test_algo_list_fields():
     assert batch.frame.loc[0, "ordIdList"] == "1,2"
 ```
 
-- [ ] **Step 2: 运行并确认失败**
+- [x] **Step 2: 运行并确认失败**
 
 Run: `pytest tests/test_handlers_private.py -q`
 Expected: `KeyError` 或 `ModuleNotFoundError`
 
-- [ ] **Step 3: 实现 `private.py`**
+- [x] **Step 3: 实现 `private.py`**
 
 ```python
 # tradeflow/subscribe/handlers/private.py
@@ -1948,12 +1948,12 @@ def parse_algo_order(packet):
 "algo-advance": parse_algo_order,
 ```
 
-- [ ] **Step 4: 运行测试**
+- [x] **Step 4: 运行测试**
 
 Run: `pytest tests/test_handlers_private.py -q`
 Expected: `3 passed`
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add tradeflow/subscribe/handlers/private.py tradeflow/subscribe/handlers/__init__.py tests/test_handlers_private.py
@@ -1968,7 +1968,7 @@ git commit -m "feat: 私有频道解析"
 - Create: `tradeflow/subscribe/writer.py`
 - Create: `tests/test_writer.py`
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```python
 # tests/test_writer.py
@@ -2057,12 +2057,12 @@ def test_writer_records_written_rows():
 
 > 时序说明：旧写法直接连 put 两次就断言 dropped，写线程可能抢先把第一帧消费掉，导致测试偶发通过/失败。改为"写线程阻塞在 session.run 内 + 先等 `first_write_started`"后，队列状态是确定的：第一帧在 handler 里挂起、第二帧占满唯一槽位、第三帧必然溢出。`block_first=False` 的用例不阻塞，避免 `stop()` 等待超时。
 
-- [ ] **Step 2: 运行并确认失败**
+- [x] **Step 2: 运行并确认失败**
 
 Run: `pytest tests/test_writer.py -q`
 Expected: `ModuleNotFoundError`
 
-- [ ] **Step 3: 实现 `writer.py`**
+- [x] **Step 3: 实现 `writer.py`**
 
 按第 6.6 节实现；`_flush` 关键逻辑：
 
@@ -2097,12 +2097,12 @@ def _flush(self, batch):
 
 `stop()` 设置 `_stop`，`join(timeout=5)`，最后 `_flush` 剩余队列。
 
-- [ ] **Step 4: 运行测试**
+- [x] **Step 4: 运行测试**
 
 Run: `pytest tests/test_writer.py -q`
 Expected: `2 passed`
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add tradeflow/subscribe/writer.py tests/test_writer.py
@@ -2117,7 +2117,7 @@ git commit -m "feat: 行情异步批量落库"
 - Create: `tradeflow/subscribe/base.py`
 - Create: `tests/test_subscribe_base.py`
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```python
 # tests/test_subscribe_base.py
@@ -2152,12 +2152,12 @@ def test_error_event_isolated():
     assert sub.error_count == 1
 ```
 
-- [ ] **Step 2: 运行并确认失败**
+- [x] **Step 2: 运行并确认失败**
 
 Run: `pytest tests/test_subscribe_base.py -q`
 Expected: `ModuleNotFoundError`
 
-- [ ] **Step 3: 实现 `base.py`**
+- [x] **Step 3: 实现 `base.py`**
 
 按第 6.5 节实现，并补两个同步辅助方法：
 
@@ -2177,12 +2177,12 @@ def remove_desired(self, args):
 
 `_key` 使用 `json.dumps(arg, sort_keys=True)`。
 
-- [ ] **Step 4: 运行测试**
+- [x] **Step 4: 运行测试**
 
 Run: `pytest tests/test_subscribe_base.py -q`
 Expected: `2 passed`
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add tradeflow/subscribe/base.py tests/test_subscribe_base.py
@@ -2202,7 +2202,7 @@ git commit -m "feat: WebSocket 连接基类"
 - Modify: `tradeflow/kernel.py`
 - Create: `tests/test_kernel_channels.py`
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```python
 # tests/test_kernel_channels.py
@@ -2224,12 +2224,12 @@ def test_depth_toggle():
     assert "books5" in names
 ```
 
-- [ ] **Step 2: 运行并确认失败**
+- [x] **Step 2: 运行并确认失败**
 
 Run: `pytest tests/test_kernel_channels.py -q`
 Expected: `AssertionError`（旧 `publicChannels` 只有 tickers）
 
-- [ ] **Step 3: 实现 `channels.py`**
+- [x] **Step 3: 实现 `channels.py`**
 
 ```python
 from dataclasses import dataclass
@@ -2298,7 +2298,7 @@ def tables_for(channels):
     return tables
 ```
 
-- [ ] **Step 4: 实现连接类和 manager**
+- [x] **Step 4: 实现连接类和 manager**
 
 `public.py`：
 
@@ -2397,12 +2397,12 @@ class SubscribeManager:
 
 `Kernel` 增加 `market/depth/options/algo/recreate_tables` 参数、`enabled_channels()`、`publicChannels`/`candleChannels`/`privateChannels`/`algoChannels`、`prepare()` 新逻辑、`subscribe()` 新逻辑、`stop()` 新逻辑。按第 7 节实现。
 
-- [ ] **Step 5: 运行测试**
+- [x] **Step 5: 运行测试**
 
 Run: `pytest tests/test_kernel_channels.py -q`
 Expected: `2 passed`
 
-- [ ] **Step 6: 提交**
+- [x] **Step 6: 提交**
 
 ```bash
 git add tradeflow/subscribe tradeflow/kernel.py tests/test_kernel_channels.py
@@ -2418,7 +2418,7 @@ git commit -m "feat: 订阅模块化与 Kernel 频道编排"
 - Modify: `tradeflow/stream/dolphin.py`
 - Create: `tests/integration/test_stream_schema.py`
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```python
 # tests/integration/test_stream_schema.py
@@ -2481,12 +2481,12 @@ def test_stream_tables_engines_and_dataflow():
 > （`useWindowStartTime=false` 输出窗口结束时间）、`shareTickTable` 单行最新、
 > `shareTickIndicatorTable` 等于最新窗口（而非聚合窗口）。
 
-- [ ] **Step 2: 运行并确认失败**
+- [x] **Step 2: 运行并确认失败**
 
 Run: `TRADEFLOW_TEST_DDB=1 pytest tests/integration/test_stream_schema.py -q`
 Expected: `ModuleNotFoundError: tradeflow.stream.engines`
 
-- [ ] **Step 3: 实现 `engines.py`**
+- [x] **Step 3: 实现 `engines.py`**
 
 ```python
 from dataclasses import dataclass
@@ -2622,12 +2622,12 @@ subscribeTable(
 """
 ```
 
-- [ ] **Step 4: 运行集成测试**
+- [x] **Step 4: 运行集成测试**
 
 Run: `TRADEFLOW_TEST_DDB=1 pytest tests/integration/test_stream_schema.py -q -s`
 Expected: `1 passed`，输出中能看到 `prepared tickStreamTable!`、`prepared engine candleIndicatorEngine!`。
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add tradeflow/stream/engines.py tradeflow/stream/dolphin.py tests/integration/test_stream_schema.py
@@ -2643,7 +2643,7 @@ git commit -m "feat: DolphinDB 流引擎定义与集成测试"
 - Create: `tests/test_reconcile.py`
 - Modify: `tradeflow/kernel.py`
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```python
 # tests/test_reconcile.py
@@ -2682,12 +2682,12 @@ def test_private_reconnect_syncs_three_sources():
     assert {call[0] for call in kernel.api.calls} == {"orders", "positions", "account"}
 ```
 
-- [ ] **Step 2: 运行并确认失败**
+- [x] **Step 2: 运行并确认失败**
 
 Run: `pytest tests/test_reconcile.py -q`
 Expected: `ModuleNotFoundError`
 
-- [ ] **Step 3: 实现 `reconcile.py`**
+- [x] **Step 3: 实现 `reconcile.py`**
 
 按第 6.7 节实现，并加：
 
@@ -2717,12 +2717,12 @@ def backfill_candles(self):
 
 `Kernel.__init__` 增加 `self.reconciler = Reconciler(self)`，并把 `reconciler` 传给各连接。
 
-- [ ] **Step 4: 运行测试**
+- [x] **Step 4: 运行测试**
 
 Run: `pytest tests/test_reconcile.py -q`
 Expected: `1 passed`
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add tradeflow/subscribe/reconcile.py tradeflow/kernel.py tests/test_reconcile.py
@@ -2739,7 +2739,7 @@ git commit -m "feat: 断线对账与 K 线补齐"
 - Modify: `tradeflow/kernel.py`
 - Create: `tests/test_health.py`
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```python
 # tests/test_health.py
@@ -2762,12 +2762,12 @@ def test_health_shape():
     assert health["reconnect_count"] == 0
 ```
 
-- [ ] **Step 2: 运行并确认失败**
+- [x] **Step 2: 运行并确认失败**
 
 Run: `pytest tests/test_health.py -q`
 Expected: `AttributeError`
 
-- [ ] **Step 3: 实现健康指标**
+- [x] **Step 3: 实现健康指标**
 
 `Subscribe.health()`：
 
@@ -2806,12 +2806,12 @@ def health(self):
     return self.manager.health() if self.manager is not None else {}
 ```
 
-- [ ] **Step 4: 运行测试**
+- [x] **Step 4: 运行测试**
 
 Run: `pytest tests/test_health.py -q`
 Expected: `1 passed`
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add tradeflow/subscribe/base.py tradeflow/subscribe/manager.py tradeflow/kernel.py tests/test_health.py
@@ -2827,7 +2827,7 @@ git commit -m "feat: 订阅健康指标"
 - Modify: `tradeflow/subscribe/handlers/market.py`
 - Create: `tests/test_orderbook.py`
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```python
 # tests/test_orderbook.py
@@ -2849,12 +2849,12 @@ def test_gap_detected():
     assert book.apply_delta("BTC", [], [], prev_seq_id=12, seq_id=13) is False
 ```
 
-- [ ] **Step 2: 运行并确认失败**
+- [x] **Step 2: 运行并确认失败**
 
 Run: `pytest tests/test_orderbook.py -q`
 Expected: `ModuleNotFoundError`
 
-- [ ] **Step 3: 实现 `orderbook.py`**
+- [x] **Step 3: 实现 `orderbook.py`**
 
 ```python
 class OrderBook:
@@ -2891,12 +2891,12 @@ class OrderBook:
 
 `parse_books` 对 `books` 频道使用 `OrderBook`；序号不连续时返回空批次并记录日志，由 `Reconciler.backfill_orderbook(instId)` 调 REST `get_orderbook(instId, sz=400)` 重建快照。
 
-- [ ] **Step 4: 运行测试**
+- [x] **Step 4: 运行测试**
 
 Run: `pytest tests/test_orderbook.py -q`
 Expected: `2 passed`
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add tradeflow/subscribe/orderbook.py tradeflow/subscribe/handlers/market.py tests/test_orderbook.py
@@ -2911,7 +2911,7 @@ git commit -m "feat: 增量盘口与序号校验"
 - Create: `tradeflow/stream/archive.py`
 - Create: `tests/integration/test_archive.py`
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```python
 # tests/integration/test_archive.py
@@ -2958,12 +2958,12 @@ def test_archive_writes_to_dfs():
 
 > 第二个测试在 `dfs://market` 写入并在结尾删除一条合成数据（`2030.12.31` + 特殊 instId），不污染流表。
 
-- [ ] **Step 2: 运行并确认失败**
+- [x] **Step 2: 运行并确认失败**
 
 Run: `TRADEFLOW_TEST_DDB=1 pytest tests/integration/test_archive.py -q`
 Expected: `ModuleNotFoundError`
 
-- [ ] **Step 3: 实现 `archive.py`**
+- [x] **Step 3: 实现 `archive.py`**
 
 > **已在本机 DolphinDB 3.00.6 端到端实测**（建库 → handler 转换 → 订阅 → 写入 → 查询 → 清理全部通过），以下写法勿再"优化"：
 >
@@ -3033,12 +3033,12 @@ def ensure_archive(dolphin=None) -> None:
 
 > `candle` 归档可按同样模式追加到 `ARCHIVE_RULES`（`date`instId`ts`o`h`l`c`vol`confirm + `channel`），列顺序与 DFS 表定义保持一致即可。
 
-- [ ] **Step 4: 运行测试**
+- [x] **Step 4: 运行测试**
 
 Run: `TRADEFLOW_TEST_DDB=1 pytest tests/integration/test_archive.py -q`
 Expected: `2 passed`
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add tradeflow/stream/archive.py tests/integration/test_archive.py
@@ -3056,7 +3056,7 @@ git commit -m "feat: 流表历史归档到 DFS"
 - Modify: `tradeflow/__init__.py`
 - Modify: `strategy/example.py`
 
-- [ ] **Step 1: 更新依赖**
+- [x] **Step 1: 更新依赖**
 
 `requirements.txt` 改为与实际 Python 3.12 环境匹配：
 
@@ -3075,7 +3075,7 @@ websockets>=13
 
 `pyproject.toml` 版本改为 `3.4.0`，`tradeflow/__init__.py` 的 `__version__` 同步。
 
-- [ ] **Step 2: 更新 README**
+- [x] **Step 2: 更新 README**
 
 至少增加：
 
@@ -3092,7 +3092,7 @@ print(json.dumps(kernel.health(), indent=2, ensure_ascii=False))
 
 6. 测试命令（第 9.4 节）。
 
-- [ ] **Step 3: 更新示例**
+- [x] **Step 3: 更新示例**
 
 `strategy/example.py` 的 `scan()` 增加一行健康日志（每 30 秒）：
 
@@ -3102,7 +3102,7 @@ if time.monotonic() - self._last_health >= 30:
     self.log(f"health: {self.kernel.health()}")
 ```
 
-- [ ] **Step 4: 全量测试**
+- [x] **Step 4: 全量测试**
 
 Run:
 
@@ -3113,7 +3113,7 @@ TRADEFLOW_TEST_DDB=1 pytest tests/integration/test_stream_schema.py tests/integr
 
 Expected: 全部通过。
 
-- [ ] **Step 5: 实盘冒烟**
+- [x] **Step 5: 实盘冒烟**
 
 Run: `python -m strategy.example`
 Expected:
@@ -3124,7 +3124,7 @@ Expected:
 - `kernel.health()["public"]["error_count"] == 0`；
 - 日志无 `ERROR`、无连续重连。
 
-- [ ] **Step 6: 提交**
+- [x] **Step 6: 提交**
 
 ```bash
 git add README.md requirements.txt pyproject.toml tradeflow/__init__.py strategy/example.py
