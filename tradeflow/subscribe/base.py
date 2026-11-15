@@ -118,22 +118,25 @@ class Subscribe:
     async def run(self):
         """重连主循环：指数退避，直到 active=False。"""
         backoff = self.interval
-        while self.active:
-            try:
-                await self._connect()
-                backoff = self.interval
-                await self._consume()
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:
-                self._error_count += 1
-                self._reconnect_count += 1
-                self.onError("连接中断, 尝试重连", exc)
-                await self._close()
-                if not self.active:
-                    break
-                await asyncio.sleep(backoff)
-                backoff = min(backoff * 2, WS_RECONNECT_MAX)
+        try:
+            while self.active:
+                try:
+                    await self._connect()
+                    backoff = self.interval
+                    await self._consume()
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    self._error_count += 1
+                    self._reconnect_count += 1
+                    self.onError("连接中断, 尝试重连", exc)
+                    await self._close()
+                    if not self.active:
+                        break
+                    await asyncio.sleep(backoff)
+                    backoff = min(backoff * 2, WS_RECONNECT_MAX)
+        finally:
+            await self._close()
 
     async def _connect(self):
         self._ws = await websockets.connect(
