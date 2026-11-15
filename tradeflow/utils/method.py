@@ -27,14 +27,8 @@ def dfApply(df: pd.DataFrame, func):
         return df.map(func)
     return df.applymap(func)
 
-def ts2Timestamp(ts: int) -> None:
-    """unix 时间转换成timestamp"""
-    if isinstance(ts, str) and ts!='':
-        ts = float(ts)
-    elif ts == '':
-        ts = 0
-    timestamp = datetime.fromtimestamp(ts/1000)
-    return pd.to_datetime(timestamp)
+# 时间转换统一走 utils.format（UTC-naive），此处仅保留兼容重导出。
+from .format import ts2Timestamp  # noqa: E402  pylint: disable=ungrouped-imports
 
 def get_instruments():
     """获取所有永续合约信息"""
