@@ -4,7 +4,10 @@
 """
 import pandas as pd
 
+from ...utils.log import get_logger
 from .batch import Batch
+
+logger = get_logger()
 
 
 def _data(packet):
@@ -44,7 +47,13 @@ def parse_trades(packet, source="trades"):
 
 
 def parse_books(packet, source):
-    """books5 / bbo-tbt 快照型盘口：asks/bids 展开成长表。"""
+    """盘口长表。
+
+    - books5 / bbo-tbt: 无状态展开（快照型推送）；
+    - books: 增量盘口，经 OrderBook 序号校验，断裂时丢弃该条。
+    """
+    if source == "books":
+        return _parse_books_incremental(packet)
     rows = []
     for item in _data(packet):
         for side, key in (("ask", "asks"), ("bid", "bids")):
@@ -61,6 +70,47 @@ def parse_books(packet, source):
                     "sz": level_data[1],
                     "source": source,
                 })
+    return [Batch("bookStreamTable", pd.DataFrame(rows))]
+
+
+def _parse_books_incremental(packet):
+    """books 频道：snapshot 重建 / update 增量，序号断裂丢弃。"""
+    from ..orderbook import ORDER_BOOK
+
+    action = packet.get("action", "snapshot")
+    rows = []
+    for item in _data(packet):
+        inst_id = item.get("instId")
+        seq_id = item.get("seqId", 0)
+        prev_seq_id = item.get("prevSeqId", 0)
+        if action == "snapshot":
+            ORDER_BOOK.apply_snapshot(
+                inst_id, item.get("bids") or [], item.get("asks") or [], seq_id=seq_id,
+            )
+        else:
+            ok = ORDER_BOOK.apply_delta(
+                inst_id, item.get("bids") or [], item.get("asks") or [],
+                prev_seq_id=prev_seq_id, seq_id=seq_id,
+            )
+            if not ok:
+                logger.warning(f"盘口序号断裂，丢弃本条: {inst_id} prevSeqId={prev_seq_id}")
+                continue
+        for side, key in (("ask", "asks"), ("bid", "bids")):
+            for level, level_data in enumerate(item.get(key) or [], start=1):
+                rows.append({
+                    "instId": inst_id,
+                    "ts": item.get("ts"),
+                    "seqId": seq_id,
+                    "prevSeqId": prev_seq_id,
+                    "checksum": item.get("checksum", 0),
+                    "side": side,
+                    "level": level,
+                    "px": level_data[0],
+                    "sz": level_data[1],
+                    "source": "books",
+                })
+    if not rows:
+        return []
     return [Batch("bookStreamTable", pd.DataFrame(rows))]
 
 
