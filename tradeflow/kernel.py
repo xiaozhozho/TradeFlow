@@ -15,19 +15,22 @@ class Kernel:
     TradeFlow的核心组件,负责管理所有模块及其组件, 包括: 行情订阅、日志输出、风险管理
     和数据库操作等,它还管理所有的策略的运行,统一交易调度等。
     """
-    def __init__(self, pause:int=1, instIds=set(), flag='0'):
+    def __init__(self, pause:int=1, instIds=set(), flag='0', warmup:int=320, private:bool=True):
         """ kernel对象, 框架核心部分, 高度适配和集成功能 """
         self.api = Api(flag=flag)        # api: 使用okx-rest-api进行低频操作
         self.email = Email()             # email: 定时发送交易、账户信息
         self.dolphin = Dolphin()         # dolphin:操作数据库及内存表等
         self.risk = RiskManage(self)     # risk: 风险管理模块
         self.pause = pause               # float: 定期运行停顿时间
+        self.warmup = warmup             # int: 启动后等待行情/订阅就绪的秒数
+        self.private_enabled = private   # bool: 是否订阅私有频道（账户/持仓/订单）
         self.instIds = instIds           # set:  交易币种的集合
         self.flag = flag                 # flag: 是否模拟
         self.logger = get_logger()       # logger: 日志记录
         self.strategies = []             # list: 策略列表
         self._active = False             # bool: kernel工作状态
         self._loop = asyncio.new_event_loop()  # 订阅的事件循环
+        self._tasks = []                        # 订阅协程句柄, 用于退出时取消
         self._thread = Thread(target=self._start, daemon=True)        # 事件循环子线程,用于行情异步订阅以及风险管理
 
     def _start(self):
@@ -82,10 +85,13 @@ class Kernel:
         self._thread.start()
         self.public = PublicSubscribe(self, self.publicChannels)
         self.candle = CandleSubscribe(self, self.candleChannels)
-        self.private = PrivateSubscribe(self, self.privateChannels)
-        asyncio.run_coroutine_threadsafe(self.public.run(), self._loop)
-        asyncio.run_coroutine_threadsafe(self.candle.run(), self._loop)
-        asyncio.run_coroutine_threadsafe(self.private.run(), self._loop)
+        self._tasks = [
+            asyncio.run_coroutine_threadsafe(self.public.run(), self._loop),
+            asyncio.run_coroutine_threadsafe(self.candle.run(), self._loop),
+        ]
+        if self.private_enabled:
+            self.private = PrivateSubscribe(self, self.privateChannels)
+            self._tasks.append(asyncio.run_coroutine_threadsafe(self.private.run(), self._loop))
 
     def prepare(self):
         """dolphindb中运行预处理脚本""" 
@@ -106,9 +112,15 @@ class Kernel:
 
         self.prepare()
         self.subscribe()
-        self.api.account.set_position_mode('net_mode')
+        if self.private_enabled:
+            try:
+                self.api.account.set_position_mode('net_mode')
+            except Exception as e:
+                # 未配置密钥或无交易权限时忽略，公共行情仍可正常订阅
+                self.logger.warning(f'<Kernel>: 设置持仓模式失败，按公共行情模式继续: {e}')
         self._active = True
-        time.sleep(320)
+        if self.warmup > 0:
+            time.sleep(self.warmup)
 
     def getTradeInstid(self,limit=20):
         """筛选流动性较好的instid作为交易对象"""
@@ -146,10 +158,19 @@ class Kernel:
 
  
     def stop(self):
-        """ 停止kernel, 行情订阅子线程进入阻塞状态 """
-        self._loop.stop()
-        self._thread.join()
+        """ 停止kernel及其行情订阅线程 """
         self._active = False
+        for name in ('public', 'candle', 'private'):
+            subscribe = getattr(self, name, None)
+            if subscribe is not None:
+                subscribe.active = False
+        for task in self._tasks:
+            task.cancel()
+        if self._loop.is_running():
+            time.sleep(0.5)  # 留出时间让 websocket 连接优雅关闭
+            self._loop.call_soon_threadsafe(self._loop.stop)
+        if self._thread.is_alive():
+            self._thread.join(timeout=5)
 
         
         

@@ -13,7 +13,7 @@ class Strategy:
 
     def log(self, msg:str):
         """ Log a message to the kernel"""
-        self.kernel.logger.info(f'<{__class__.__name__}>: {msg}')
+        self.kernel.logger.info(f'<{self.__class__.__name__}>: {msg}')
      
     @abstractmethod
     def preinit(self):
@@ -73,6 +73,7 @@ class Strategy:
         """ Run the strategy """
         if not self._active:
             self.init()
+            self._active = True
         self.scan()
         
 

@@ -19,6 +19,20 @@ from .setting import (
 
 logger = get_logger()
 
+# 与 stream/script.py 中 createShareAccountTableScript 的列顺序保持一致
+ACCOUNT_COLUMNS = [
+    'availBal', 'availEq', 'borrowFroz', 'cashBal', 'ccy', 'coinUsdPrice', 'crossLiab',
+    'disEq', 'eq', 'eqUsd', 'fixedBal', 'frozenBal', 'interest', 'isoEq', 'isoLiab',
+    'isoUpl', 'liab', 'maxLoan', 'mgnRatio', 'notionalLever', 'ordFrozen',
+    'spotInUseAmt', 'stgyEq', 'twap', 'uTime', 'upl', 'uplLiab',
+]
+
+
+def toNumeric(data: pd.DataFrame, columns, dtype: str = 'float64') -> pd.DataFrame:
+    """将指定列强制转为数值，空串/unsupported/off 等非数值统一按 0 处理。"""
+    data[columns] = data[columns].apply(pd.to_numeric, errors='coerce').fillna(0).astype(dtype)
+    return data
+
 
 class Subscribe(object):
     """"公告频道抽象订阅类"""
@@ -49,11 +63,17 @@ class Subscribe(object):
                 print(f'subscribe channel: {channel}, instType: {instType} successfully!')
             else:
                 print(f'subscribe channel: {channel} successfully!')
+            return
 
-        else:
-            code = packet['code']
-            msg = packet['msg']
-            print(f'subscribe failed, code: {code}, msg: {msg}')
+        if event == 'login':
+            on_login = getattr(self, 'onLogin', None)
+            if on_login is not None:
+                on_login(packet)
+            return
+
+        code = packet.get('code')
+        msg = packet.get('msg', packet)
+        print(f'subscribe failed, event: {event}, code: {code}, msg: {msg}')
 
     @abstractmethod
     def onPacket(self, packet):
@@ -115,7 +135,7 @@ class PublicSubscribe(Subscribe):
     def onProduct(self, packet):
         if packet['data']:
             data = pd.DataFrame(packet['data'])
-            data = dfApply(data, lambda x: x if x else 0)
+            data = dfApply(data, lambda x: 0 if x in ('', 'unsupported') else x)
             data['category'] = data['category'].astype(int)
             data[['ctVal','ctMult','stk','tickSz','lotSz','minSz','maxLmtSz','maxMktSz','maxTwapSz','maxIcebergSz','maxTriggerSz','maxStopSz']] = \
                  data[['ctVal','ctMult','stk','tickSz','lotSz','minSz','maxLmtSz','maxMktSz','maxTwapSz','maxIcebergSz','maxTriggerSz','maxStopSz']].astype(float)
@@ -217,7 +237,7 @@ class PublicSubscribe(Subscribe):
                     await ws.send(param)
                     while self.active:
                         response = await asyncio.wait_for(ws.recv(), timeout=self.timeout)
-                        packet = eval(response)
+                        packet = json.loads(response)
                         self.onPacket(packet)
 
             except Exception as e:
@@ -260,7 +280,7 @@ class CandleSubscribe(Subscribe):
                     await ws.send(param)
                     while self.active:
                         response = await asyncio.wait_for(ws.recv(), timeout=self.timeout)
-                        packet = eval(response)
+                        packet = json.loads(response)
                         self.onPacket(packet)
 
             except Exception as e:
@@ -314,10 +334,10 @@ class PrivateSubscribe(Subscribe):
     def onAccount(self, packet):
         details = packet['data'][0]['details']
         data = pd.DataFrame(details)
-        data = dfApply(data, lambda x: 0 if x=='' else x) # 解决值为：'' 的情况
+        # OKX 新版本会返回更多字段，只保留账户表结构中的列，缺失列按 0 处理
+        data = data.reindex(columns=ACCOUNT_COLUMNS)
         ccy = data['ccy']
-        data['ccy'] = 0
-        data = data.astype(float)
+        data = toNumeric(data, [c for c in ACCOUNT_COLUMNS if c not in ('ccy', 'uTime')])
         data['ccy'] = ccy
         data['uTime'] = data['uTime'].apply(ts2Timestamp)
         self.kernel.dolphin.data2MemoryTable('shareAccountTable', data)
@@ -325,36 +345,29 @@ class PrivateSubscribe(Subscribe):
     def onPosition(self, packet):
         if packet['data']:
             data = pd.DataFrame(packet['data'])
-            data = dfApply(data, lambda x: x if x else 0)
-            data['adl'] = data['adl'].astype(int)
-            data[['posId', 'tradeId']] = data[['posId', 'tradeId']].astype('int64')
-            data[['availPos','avgPx','baseBal','baseBorrowed','baseInterest','bizRefId','bizRefType','closeOrderAlgo',
+            data['adl'] = pd.to_numeric(data['adl'], errors='coerce').fillna(0).astype(int)
+            data[['posId', 'tradeId']] = data[['posId', 'tradeId']].apply(pd.to_numeric, errors='coerce').fillna(0).astype('int64')
+            data = toNumeric(data, ['availPos','avgPx','baseBal','baseBorrowed','baseInterest','bizRefId','bizRefType','closeOrderAlgo',
                 'deltaBS','deltaPA','fee','fundingFee','gammaBS','gammaPA','idxPx','imr','interest','last','lever','liab','liabCcy',
                 'liqPenalty','liqPx','margin','markPx','mgnRatio','mmr','notionalUsd','optVal','pendingCloseOrdLiabVal','pnl','pos',
                 'posCcy','quoteBal','quoteBorrowed','quoteInterest','realizedPnl','spotInUseAmt','spotInUseCcy','thetaBS','thetaPA',
-                'upl','uplLastPx','uplRatio','uplRatioLastPx','usdPx','vegaBS','vegaPA']] = \
-                data[['availPos','avgPx','baseBal','baseBorrowed','baseInterest','bizRefId','bizRefType','closeOrderAlgo',
-                'deltaBS','deltaPA','fee','fundingFee','gammaBS','gammaPA','idxPx','imr','interest','last','lever','liab','liabCcy',
-                'liqPenalty','liqPx','margin','markPx','mgnRatio','mmr','notionalUsd','optVal','pendingCloseOrdLiabVal','pnl','pos',
-                'posCcy','quoteBal','quoteBorrowed','quoteInterest','realizedPnl','spotInUseAmt','spotInUseCcy','thetaBS','thetaPA',
-                'upl','uplLastPx','uplRatio','uplRatioLastPx','usdPx','vegaBS','vegaPA']].astype('float64')
+                'upl','uplLastPx','uplRatio','uplRatioLastPx','usdPx','vegaBS','vegaPA'])
             data[['cTime', 'pTime', 'uTime']] = dfApply(data[['cTime', 'pTime', 'uTime']], ts2Timestamp)
             self.kernel.dolphin.data2MemoryTable('sharePositionTable', data)
             
     def onBalance(self, packet):
         balData = packet['data'][0]['balData']
         data = pd.DataFrame(balData)
-        data['cashBal'] = data['cashBal'].astype(float)
+        data['cashBal'] = pd.to_numeric(data['cashBal'], errors='coerce').fillna(0).astype(float)
         data['uTime'] = data['uTime'].apply(ts2Timestamp)
         self.kernel.dolphin.data2MemoryTable('shareBalanceTable', data)
 
     def onOrder(self, packet):
         if packet['data']:
             data = pd.DataFrame(packet['data'])
-            data[['amendResult', 'amendSource', 'cancelSource', 'code', 'lever', 'source','algoClOrdId','algoId','attachAlgoClOrdId','clOrdId','ordId','reqId','stpId','tradeId']] = \
-                dfApply(data[['amendResult', 'amendSource', 'cancelSource', 'code', 'lever', 'source','algoClOrdId','algoId','attachAlgoClOrdId','clOrdId','ordId','reqId','stpId','tradeId']], lambda x:int(x) if x!='' else 0)
-            data[['accFillSz','avgPx','fee','fillFee','fillNotionalUsd','fillPnl','fillPx','fillSz','notionalUsd','pnl','px','rebate','slOrdPx','slTriggerPx','sz','tpOrdPx','tpTriggerPx','fillFwdPx','fillMarkPx','fillMarkVol','fillPxUsd','fillPxVol','pxUsd','pxVol']] = \
-                dfApply(data[['accFillSz','avgPx','fee','fillFee','fillNotionalUsd','fillPnl','fillPx','fillSz','notionalUsd','pnl','px','rebate','slOrdPx','slTriggerPx','sz','tpOrdPx','tpTriggerPx','fillFwdPx','fillMarkPx','fillMarkVol','fillPxUsd','fillPxVol','pxUsd','pxVol']], lambda x:float(x) if x!='' else 0)
+            int_cols = ['amendResult', 'amendSource', 'cancelSource', 'code', 'lever', 'source','algoClOrdId','algoId','attachAlgoClOrdId','clOrdId','ordId','reqId','stpId','tradeId']
+            data[int_cols] = data[int_cols].apply(pd.to_numeric, errors='coerce').fillna(0).astype('int64')
+            data = toNumeric(data, ['accFillSz','avgPx','fee','fillFee','fillNotionalUsd','fillPnl','fillPx','fillSz','notionalUsd','pnl','px','rebate','slOrdPx','slTriggerPx','sz','tpOrdPx','tpTriggerPx','fillFwdPx','fillMarkPx','fillMarkVol','fillPxUsd','fillPxVol','pxUsd','pxVol'])
             data[['cTime', 'fillTime', 'uTime']] = dfApply(data[['cTime', 'fillTime', 'uTime']], ts2Timestamp)
             self.kernel.dolphin.data2MemoryTable('orderStreamTable', data)
 
@@ -367,14 +380,11 @@ class PrivateSubscribe(Subscribe):
         print(packet)
         if packet['data']:
             data = pd.DataFrame(packet['data'])
-            data['adl'] = data['adl'].astype(int)
-            data[['posId', 'tradeId']] = data[['posId', 'tradeId']].astype('int64')
-            data[['availPos','avgPx','deltaBS', 'deltaPA','gammaBS','gammaPA','imr','interest',
+            data['adl'] = pd.to_numeric(data['adl'], errors='coerce').fillna(0).astype(int)
+            data[['posId', 'tradeId']] = data[['posId', 'tradeId']].apply(pd.to_numeric, errors='coerce').fillna(0).astype('int64')
+            data = toNumeric(data, ['availPos','avgPx','deltaBS', 'deltaPA','gammaBS','gammaPA','imr','interest',
                   'last','lever','liab','liqPx','markPx','margin','mgnRatio','mmr','notionalUsd',
-                  'optVal','pos','thetaBS','thetaPA','upl','uplRatio','vegaBS','vegaPA']] = \
-                  data[['availPos','avgPx','deltaBS', 'deltaPA','gammaBS','gammaPA','imr','interest',
-                  'last','lever','liab','liqPx','markPx','margin','mgnRatio','mmr','notionalUsd',
-                  'optVal','pos','thetaBS','thetaPA','upl','uplRatio','vegaBS','vegaPA']].astype(float)
+                  'optVal','pos','thetaBS','thetaPA','upl','uplRatio','vegaBS','vegaPA'])
             data[['cTime', 'pTime', 'uTime']] = dfApply(data[['cTime', 'pTime', 'uTime']], ts2Timestamp)
             self.kernel.dolphin.data2MemoryTable('shareWarningTable', data)
 
@@ -385,7 +395,7 @@ class PrivateSubscribe(Subscribe):
                     # login
                     await ws.send(self.loginParam)
                     response = await ws.recv()
-                    packet = eval(response)
+                    packet = json.loads(response)
                     self.onLogin(packet)
 
                     # subscribe
@@ -393,7 +403,7 @@ class PrivateSubscribe(Subscribe):
                     await ws.send(param)
                     while self.active:
                         response = await asyncio.wait_for(ws.recv(), timeout=self.timeout)
-                        packet = eval(response)
+                        packet = json.loads(response)
                         self.onPacket(packet)
 
             except Exception as e:

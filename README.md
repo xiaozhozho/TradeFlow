@@ -41,6 +41,8 @@ kernel.start()
 python -m strategy.example
 ```
 
+`Kernel` 常用参数：`warmup` 为启动预热秒数（默认 320），`private=False` 时只订阅公共行情、无需私有 API Key。
+
 ## 目录结构
 
 ```
@@ -141,3 +143,12 @@ TradeFlow/
 - 日志改为按调用脚本定位：在脚本同目录创建 `log/`，并写入与脚本同名的日志文件（如 `test.py` → `log/test.log`）；
 - `get_logger` 支持从 `tradeflow` 顶层直接导入；
 - `TRADEFLOW_LOG_DIR` 仍可用于覆盖日志根目录。
+
+## version 3.3.2
+
+- `Kernel` 新增 `warmup`（启动预热秒数）与 `private`（是否订阅私有频道）参数，支持仅公共行情运行；
+- 修复 `Strategy.run()` 重复执行 `init()` 的问题，策略初始化只执行一次；
+- WebSocket 消息解析由 `eval` 改为 `json.loads`，避免 JSON 布尔值导致断线重连；
+- 私有频道数值字段统一使用 `pd.to_numeric` 容错（空串、`unsupported`、`off` 等按 0 处理），并按账户表结构对齐列；
+- `Kernel.stop()` 取消订阅协程并优雅关闭 WebSocket；
+- `strategy/example.py` 跑通完整示例：创建 DolphinDB 流表/引擎、订阅 OKX tick 并落库、每 3 秒统计 `tickStreamTable` 数据量。
