@@ -1949,22 +1949,24 @@ from tradeflow.subscribe.writer import StreamWriter
 
 
 class FakeSession:
-    """阻塞式假 session：首次写入后挂起，模拟 DolphinDB 写入慢，保证测试确定性。"""
+    """可阻塞的假 session：block_first=True 时首次写入挂起，模拟写库慢。"""
 
-    def __init__(self):
+    def __init__(self, block_first: bool = False):
         self.calls = []
+        self.block_first = block_first
         self.first_write_started = threading.Event()
         self.release = threading.Event()
 
     def run(self, script, frame):
         self.calls.append((script, frame))
-        self.first_write_started.set()
-        self.release.wait(timeout=5)
+        if self.block_first and not self.release.is_set():
+            self.first_write_started.set()
+            self.release.wait(timeout=5)
 
 
 class FakeDolphin:
-    def __init__(self):
-        self.session = FakeSession()
+    def __init__(self, block_first: bool = False):
+        self.session = FakeSession(block_first)
 
     def newSession(self):
         return self.session
@@ -1981,8 +1983,18 @@ def test_writer_batches_by_table():
     assert len(dolphin.session.calls[0][1]) == 2
 
 
-def test_writer_drops_when_full():
+def test_writer_groups_multiple_tables():
     dolphin = FakeDolphin()
+    writer = StreamWriter(dolphin, batch_size=10, flush_interval=0.2)
+    writer.put("tickStreamTable", pd.DataFrame([{"instId": "BTC", "ts": 1}]))
+    writer.put("candleStreamTable", pd.DataFrame([{"ts": 1, "c": 1.0}]))
+    writer.stop()
+    scripts = [script for script, _ in dolphin.session.calls]
+    assert len(scripts) == 2
+
+
+def test_writer_drops_when_full():
+    dolphin = FakeDolphin(block_first=True)
     writer = StreamWriter(dolphin, batch_size=1, flush_interval=1, queue_size=1)
     writer.put("tickStreamTable", pd.DataFrame([{"instId": "BTC", "ts": 1}]))
     # 等写线程取走第一帧并阻塞在 session.run 内，此时队列已空且无法继续消化
@@ -1992,9 +2004,27 @@ def test_writer_drops_when_full():
     assert writer.stats()["dropped"] >= 1
     dolphin.session.release.set()  # 放行写线程，恢复队列消化
     writer.stop()
+
+
+def test_writer_skips_empty_frame():
+    dolphin = FakeDolphin()
+    writer = StreamWriter(dolphin, batch_size=10, flush_interval=0.2)
+    writer.put("tickStreamTable", pd.DataFrame())
+    writer.stop()
+    assert dolphin.session.calls == []
+
+
+def test_writer_records_written_rows():
+    dolphin = FakeDolphin()
+    writer = StreamWriter(dolphin, batch_size=10, flush_interval=0.2)
+    writer.put("tickStreamTable", pd.DataFrame([{"instId": "BTC", "ts": 1}]))
+    writer.put("tickStreamTable", pd.DataFrame([{"instId": "ETH", "ts": 2}]))
+    writer.stop()
+    assert writer.stats()["written"] == 2
+    assert writer.stats()["dropped"] == 0
 ```
 
-> 时序说明：旧写法直接连 put 两次就断言 dropped，写线程可能抢先把第一帧消费掉，导致测试偶发通过/失败。改为"写线程阻塞在 session.run 内 + 先等 `first_write_started`"后，队列状态是确定的：第一帧在 handler 里挂起、第二帧占满唯一槽位、第三帧必然溢出。
+> 时序说明：旧写法直接连 put 两次就断言 dropped，写线程可能抢先把第一帧消费掉，导致测试偶发通过/失败。改为"写线程阻塞在 session.run 内 + 先等 `first_write_started`"后，队列状态是确定的：第一帧在 handler 里挂起、第二帧占满唯一槽位、第三帧必然溢出。`block_first=False` 的用例不阻塞，避免 `stop()` 等待超时。
 
 - [ ] **Step 2: 运行并确认失败**
 
