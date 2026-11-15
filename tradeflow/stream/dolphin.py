@@ -1,3 +1,4 @@
+import threading
 import time
 import dolphindb as ddb
 from pandas import DataFrame
@@ -10,14 +11,20 @@ class Dolphin:
     """DolphinDB 数据库管理类,为了避免多个session的切换,考虑使用单例模式"""
     def __new__(cls, *args, **kargs):
         if not hasattr(cls, '__instance__'):
-            cls.__instance__ = super().__new__(cls, *args, **kargs)
+            cls.__instance__ = super().__new__(cls)
         return cls.__instance__
 
     def __init__(self, host=DOLPHINDB_HOST, port=DOLPHINDB_PORT, userid=DOLPHINDB_USER, password=DOLPHINDB_PASSWORD) -> None:
+        # 单例守卫：重复 Dolphin() 不重建 session（否则会打断正在使用的连接）
+        if getattr(self, '_initialized', False):
+            return
+        self._initialized = True
         self.host = host 
         self.port = port 
         self.userid = userid
         self.password = password
+        # 多线程（StreamWriter 写线程 / 主线程）共用实例，所有脚本执行加锁
+        self._lock = threading.RLock()
         # 注1：新版客户端的 keepAliveTime 单位为秒且有上限，不能传 TIMEOUT(999999)，
         #      使用客户端默认的网络超时即可；TIMEOUT 仅用于 WebSocket 订阅。
         # 注2：凭据必须在 connect() 时传入，只传给构造函数无效，
@@ -26,6 +33,16 @@ class Dolphin:
         self.session.connect(host=host, port=port, userid=userid, password=password, reconnect=True)
         self.asyncSession = ddb.session(enableASYNC=True)
         self.asyncSession.connect(host=host, port=port, userid=userid, password=password, reconnect=True)
+
+    def newSession(self, enableAsync: bool = False):
+        """创建一条独立连接（用于 StreamWriter 等独立线程，避免 session 串扰）。"""
+        session = ddb.session(enableASYNC=enableAsync)
+        session.connect(
+            host=self.host, port=self.port,
+            userid=self.userid, password=self.password,
+            reconnect=True,
+        )
+        return session
 
     @lru_cache()
     def getSession(self, enableAsync=False, isCompress=False, highAvailability=False):
@@ -78,12 +95,31 @@ class Dolphin:
         return result
 
     def runScript(self, *script, enableAsync=False, clearMemory=False):
-        """ 运行脚本文件 """
-        if enableAsync:
-            self.asyncSession.run(*script, clearMemory=clearMemory)
-        else:
-            result = self.session.run(*script, clearMemory=clearMemory)
-            return result
+        """ 运行脚本文件（加锁，避免多线程共用 session 串扰） """
+        with self._lock:
+            if enableAsync:
+                self.asyncSession.run(*script, clearMemory=clearMemory)
+            else:
+                result = self.session.run(*script, clearMemory=clearMemory)
+                return result
+
+    def prepare_streams(self, table_names, recreate=False):
+        """按 schema 注册表幂等建表；recreate=True 时先删后建（会丢数据）。"""
+        from .schema import STREAM_TABLES
+        unknown = [name for name in table_names if name not in STREAM_TABLES]
+        if unknown:
+            raise KeyError(f'未注册的流表: {unknown}')
+        for name in table_names:
+            spec = STREAM_TABLES[name]
+            self.runScript(spec.ensure_script(recreate=recreate))
+            print(f"prepared {name}!")
+
+    def prepare_engines(self, engine_names):
+        """按 engines 注册表重建流引擎与订阅。"""
+        from .engines import ENGINE_SPECS, create_engine_script
+        for name in engine_names:
+            self.runScript(create_engine_script(ENGINE_SPECS[name]))
+            print(f"prepared engine {name}!")
 
     def data2MemoryTable(self, tableName, *data, enableAsync=False, clearMemory=False):
         """ 将 data: DataFrame or iterable 插入内存表中 """
@@ -169,277 +205,77 @@ class Dolphin:
         self.runScript(script)
 
     # ***********   关于流数据表、内存表的函数     **************
-    # (1) 公共频道-流数据表创建
-    def createStreamTable(self, tableName, colName, colType, cacheSize=500000, retentionMinutes=300, preCache=500000):
-        """ 创建普通流数据表 """
-        script = f"""
-        colName = {colName}
-        colType = {colType}
-        {tableName} = streamTable({cacheSize}:0, colName, colType)
-        enableTableShareAndPersistence({tableName}, "{tableName}StreamTable", false, true, cacheSize={cacheSize}, retentionMinutes={retentionMinutes}, preCache={preCache});
-        """
-        try:
-            self.runScript(script)
-            print(f'created {tableName}!')
-        except Exception as e:
-            print(f'createe {tableName} failed for {e}!')
+
+    # ***********   流数据表创建：统一委托 schema 注册表   **************
+    # 旧方法保留原签名（kernel.py 等调用方无需改动），
+    # 建表逻辑统一走 prepare_streams：幂等建表，existDrop=True 时先删后建。
+    def prepare(self, table_names, recreate=False):
+        """批量建表入口。"""
+        self.prepare_streams(table_names, recreate=recreate)
 
     def createProductStreamTable(self, existDrop=True):
-        """ 创建产品 流数据表 """
-        try:
-            self.runScript(createProductStreamTableScript)
-            print('created productStreamTable!')
-        except RuntimeError as e:
-            if existDrop:
-                self.dropStreamTable('productStreamTable')
-                self.runScript(createProductStreamTableScript)
-                print('created productStreamTable!')
-            else:
-                raise e
+        self.prepare_streams(["productStreamTable"], recreate=existDrop)
 
     def createTickStreamTable(self, existDrop=True):
-        """ 创建tick流数据表 """
-        try:
-            self.runScript(createTickStreamTableScript)
-            print('created tickStreamTable!')
-        except RuntimeError as e:
-            if existDrop:
-                self.dropStreamTable('tickStreamTable')
-                self.runScript(createTickStreamTableScript)
-                print('created tickStreamTable!')
-            else:
-                pass
+        self.prepare_streams(["tickStreamTable"], recreate=existDrop)
 
     def createShareTickTable(self):
-        """ 创建最新tick共享内存表 """
-        self.runScript(createShareTickTableScript)
-        print('created shareTickTable!')
-
-    def createLastTickEngine(self):
-        """创建最新tick内存表的订阅引擎"""
-        script = """
-        try
-            {subscribeTable(tableName=`tickStreamTable, actionName="lastTickAction", offset=0, handler=tableInsert{shareTickTable}, msgAsTable=true)}
-        catch(ex)
-            {
-                unsubscribeTable(tableName='tickStreamTable', actionName='lastTickAction')
-                subscribeTable(tableName=`tickStreamTable, actionName="lastTickAction", offset=0, handler=tableInsert{shareTickTable}, msgAsTable=true)
-            }
-        """
-        self.runScript(script)
+        self.prepare_streams(["shareTickTable"])
 
     def createCandleStreamTable(self, existDrop=True):
-        """创建candle流数据表"""
-        try:
-            self.runScript(createCandleStreamTableScript)
-            print('created candleStreamTable!')
-        except RuntimeError as e:
-            if existDrop:
-                self.dropStreamTable('candleStreamTable')
-                self.runScript(createCandleStreamTableScript)
-                print('created candleStreamTable!')
-            else:
-                pass
+        self.prepare_streams(["candleStreamTable"], recreate=existDrop)
 
     def createOpenInterestStreamTable(self, existDrop=True):
-        """" 创建持仓流数据表 """
-        try:
-            self.runScript(createOpenInterestStreamTableScript)
-            print('create openinterestStreamTable!')
-        except RuntimeError as e:
-            if existDrop:
-                self.dropStreamTable('openinterestStreamTable')
-                self.runScript(createOpenInterestStreamTableScript)
-                print('create openinterestStreamTable!')
-            else:
-                pass
+        self.prepare_streams(["openinterestStreamTable"], recreate=existDrop)
 
     def createEstimatedPriceStreamTable(self, existDrop=True):
-        """ 创建交割/行权价格 流数据表 """
-        try:
-            self.runScript(createEstimatedPriceStreamTableScript)
-            print('create estimatedpriceStreamTable!')
-        except RuntimeError as e:
-            if existDrop:
-                self.dropStreamTable('estimatedpriceStreamTable')
-                self.runScript(createEstimatedPriceStreamTableScript)
-                print('created estimatedpriceStreamTable!')
-            else:
-                pass
+        self.prepare_streams(["estimatedpriceStreamTable"], recreate=existDrop)
 
     def createMarkPriceStreamTable(self, existDrop=True):
-        """ 创建标记价格 流数据表 """
-        try:
-            self.runScript(createMarkPriceStreamTableScript)
-            print('created markpriceStreamTable!')
-        except RuntimeError as e:
-            if existDrop:
-                self.dropStreamTable('markpriceStreamTable')
-                self.runScript(createMarkPriceStreamTableScript)
-                print('created markpriceStreamTable!')
-            else:
-                pass
+        self.prepare_streams(["markpriceStreamTable"], recreate=existDrop)
 
     def createMarkPriceCandleStreamTable(self, existDrop=True):
-        """ 创建标记价格K线 流数据表 """
-        try:
-            self.runScript(createMarkPriceCandleStreamTableScript)
-            self.print('created markpricecandleStreamTable!')
-        except RuntimeError as e:
-            if existDrop:
-                self.dropStreamTable('markpricecandleStreamTable')
-                self.runScript(createMarkPriceCandleStreamTableScript)
-                print('created markpricecandleStreamTable!')
-            else:
-                pass
+        self.prepare_streams(["markpricecandleStreamTable"], recreate=existDrop)
 
     def createPriceLimitStreamTable(self, existDrop=True):
-        """ 创建限价 流数据表 """
-        try:
-            self.runScript(createPriceLimitStreamTableScript)
-            print('created pricelimitStreamTable!')
-        except RuntimeError as e:
-            if existDrop:
-                self.dropStreamTable('pricelimitStreamTable')
-                self.runScript(createPriceLimitStreamTableScript)
-                print('created pricelimitStreamTable!')
-            else:
-                pass
+        self.prepare_streams(["pricelimitStreamTable"], recreate=existDrop)
 
     def createOptSummaryStreamTable(self, existDrop=True):
-        """ 创建期权汇总 流数据表 """
-        try:
-            self.runScript(createOptSummaryStreamTableScript)
-            print('created optsummaryStreamTable!')
-        except RuntimeError as e:
-            if existDrop:
-                self.dropStreamTable('optsummaryStreamTable')
-                self.runScript(createOptSummaryStreamTableScript)
-                print('created optsummaryStreamTable!')
-            else:
-                pass
+        self.prepare_streams(["optsummaryStreamTable"], recreate=existDrop)
 
     def createFundingRateStreamTable(self, existDrop=True):
-        """ 创建资金费率 流数据表 """
-        try:
-            self.runScript(createFundingRateStreamTableScript)
-            print('created fundingrateStreamTable!')
-        except RuntimeError as e:
-            if existDrop:
-                self.dropStreamTable('fundingrateStreamTable')
-                self.runScript(createFundingRateStreamTableScript)
-                print('created fundingrateStreamTable!')
-            else:
-                pass
+        self.prepare_streams(["fundingrateStreamTable"], recreate=existDrop)
 
     def createIndexCandleStreamTable(self, existDrop=True):
-        """ 创建指数数据 流数据表 """
-        try:
-            self.runScript(createIndexCandleStreamTableScript)
-            print('created indexcandleStreamTable!')
-        except RuntimeError as e:
-            if existDrop:
-                self.dropStreamTable('indexcandleStreamTable')
-                self.runScript(createIndexCandleStreamTableScript)
-                print('created indexcandleStreamTable!')
-            else:
-                pass
+        self.prepare_streams(["indexcandleStreamTable"], recreate=existDrop)
 
     def createIndexTickStreamTable(self, existDrop=True):
-        """ 创建指数tick 流数据表 """
-        try:
-            self.runScript(createIndexTickStreamTableScript)
-            print('created indextickStreamTable!')
-        except RuntimeError as e:
-            if existDrop:
-                self.dropStreamTable('indextickStreamTable')
-                self.runScript(createIndexTickStreamTableScript)
-                print('created indextickStreamTable!')
-            else:
-                pass
+        self.prepare_streams(["indextickStreamTable"], recreate=existDrop)
 
     def createOptionTradeStreamTable(self, existDrop=True):
-        """ 创建期权交易 流数据表"""
-        try:
-            self.runScript(createOptionTradeStreamTableScript)
-            print('created optiontradeStreamTable!')
-        except RuntimeError as e:
-            if existDrop:
-                self.dropStreamTable('optiontradeStreamTable')
-                self.runScript(createOptionTradeStreamTableScript)
-                print('created optiontradeStreamTable!')
-            else:
-                pass
+        self.prepare_streams(["optiontradeStreamTable"], recreate=existDrop)
 
     def createLiquidationOrderStreamTable(self, existDrop=True):
-        """ 创建公共频道爆仓信息 流数据表 """
-        try:
-            self.runScript(createLiquidationOrderStreamTableScript)
-            print('created liquidationorderStreamTable!')
-        except RuntimeError as e:
-            if existDrop:
-                self.dropStreamTable('liquidationorderStreamTable')
-                self.runScript(createLiquidationOrderStreamTableScript)
-                print('created liquidationorderStreamTable!')
-            else:
-                pass
+        self.prepare_streams(["liquidationorderStreamTable"], recreate=existDrop)
 
     def createStatusStreamTable(self, existDrop=True):
-        """ 创建系统维护状态 流数据表 """
-        try:
-            self.runScript(createStatusStreamTableScript)
-            print('created statusStreamTable!')
-        except RuntimeError as e:
-            if existDrop:
-                self.dropStreamTable('statusStreamTable')
-                self.runScript(createStatusStreamTableScript)
-                print('created statusStreamTable!')
-            else:
-                pass
-
+        self.prepare_streams(["statusStreamTable"], recreate=existDrop)
 
     # ***********  私有频道-流数据表创建  *****************
     def createShareAccountTable(self):
-        """ 创建账户信息 内存数据表"""
-        self.runScript(createShareAccountTableScript)
-        print('created shareAccountTable!')
-        
+        self.prepare_streams(["shareAccountTable"])
+
     def createSharePositionTable(self):
-        """ 创建持仓最新索引内存表 """
-        self.runScript(createSharePositionTableScript)
-        print('created sharePositionTable!')
+        self.prepare_streams(["sharePositionTable"])
 
     def createShareBalanceTable(self):
-        """ 创建余额 内存数据表 """
-        self.runScript(createShareBalanceTableScript)
-        print('created shareBalanceTable!')
+        self.prepare_streams(["shareBalanceTable"])
 
     def createOrderStreamTable(self, existDrop=True):
-        """ 创建订单 流数据表 """
-        try:
-            
-            self.runScript(createOrderStreamTableScript)
-            print('created orderStreamTable!')
-        except RuntimeError as e:
-            if existDrop:
-                self.dropStreamTable('orderStreamTable')
-                self.runScript(createOrderStreamTableScript)
-                print('created orderStreamTable!')
-            else:
-                raise e
+        self.prepare_streams(["orderStreamTable"], recreate=existDrop)
+
+    def createShareOrderTable(self):
+        self.prepare_streams(["shareOrderTable"])
 
     def createShareWarningTable(self):
-        """" 创建持仓预警内存表 """
-        self.runScript(createShareWarningTableScript)
-        print('created shareWarningTable!')
-
-
-
-
-
-
-
-
-
-
-
+        self.prepare_streams(["shareWarningTable"])
