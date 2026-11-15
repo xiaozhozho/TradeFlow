@@ -221,7 +221,6 @@ share warning as shareWarningTable
 
 # ************ 3.创建分区数据库脚本***********
 createCandleLibScript = """
-login('admin','***REMOVED***')
 clearAllCache()
 
 instIds = ['BTC-USDT-SWAP','CRV-USDT-SWAP','ETH-USDT-SWAP']
