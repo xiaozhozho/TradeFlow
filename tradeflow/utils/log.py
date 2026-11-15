@@ -1,10 +1,22 @@
 import logging
+import os
 from logging import FileHandler, StreamHandler
 from datetime import datetime
 from pathlib import Path
 
 
-LOG_DIR = Path(__file__).resolve().parent.parent / "log"
+def _resolve_log_dir() -> Path:
+    """日志目录：TRADEFLOW_LOG_DIR > 源码仓库根目录/log > 当前工作目录/log。"""
+    override = os.getenv("TRADEFLOW_LOG_DIR")
+    if override:
+        return Path(override).expanduser()
+    repo_root = Path(__file__).resolve().parents[2]
+    if (repo_root / "pyproject.toml").is_file() or (repo_root / ".git").exists():
+        return repo_root / "log"
+    return Path.cwd() / "log"
+
+
+LOG_DIR = _resolve_log_dir()
 
 
 def get_logger():

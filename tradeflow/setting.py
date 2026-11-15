@@ -1,7 +1,8 @@
 """全局配置。
 
-所有敏感信息（API Key / Secret / 密码 / 邮箱授权码）统一放在与本文件同目录的
-`.env` 文件中，通过环境变量读取；`.env` 已在 `.gitignore` 中排除。
+所有敏感信息（API Key / Secret / 密码 / 邮箱授权码）统一放在 `.env` 文件中，
+由 `_find_env_file` 按优先级查找（当前目录、包目录、仓库根目录）；`.env` 已在
+`.gitignore` 中排除。
 
 优先级：真实环境变量 > .env 中的值 > 代码内默认值（默认值为空，缺失时启动即报错）。
 """
@@ -9,10 +10,26 @@ import os
 from pathlib import Path
 
 
-def _load_env(env_name: str = ".env") -> None:
+def _find_env_file() -> Path | None:
+    """按优先级查找 .env：显式路径 > 当前工作目录 > 包目录 > 源码仓库根目录。"""
+    explicit = os.getenv("TRADEFLOW_ENV_FILE")
+    package_dir = Path(__file__).resolve().parent
+    candidates = [
+        Path(explicit).expanduser() if explicit else None,
+        Path.cwd() / ".env",
+        package_dir / ".env",
+        package_dir.parent / ".env",
+    ]
+    for candidate in candidates:
+        if candidate is not None and candidate.is_file():
+            return candidate
+    return None
+
+
+def _load_env() -> None:
     """将 .env 文件内容写入环境变量；已存在的环境变量不会被覆盖。"""
-    env_file = Path(__file__).resolve().parent / env_name
-    if not env_file.exists():
+    env_file = _find_env_file()
+    if env_file is None:
         return
     for raw_line in env_file.read_text(encoding="utf-8").splitlines():
         line = raw_line.strip()
