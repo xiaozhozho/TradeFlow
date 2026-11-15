@@ -2,10 +2,10 @@
 TradeFlow：Python 量化交易框架，可作为第三方包导入使用。
 
 Author: Mr:xzz
-version: 3.3.2
+version: 3.4.0
 """
 
-__version__ = "3.3.2"
+__version__ = "3.4.0"
 
 from .setting import OKX_FORCE_IPV4
 

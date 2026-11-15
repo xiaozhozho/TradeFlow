@@ -88,7 +88,8 @@ def test_backfill_candles_only_fills_gap():
         ["1704067200000", "1", "2", "0.5", "1.5", "10", "10", "15", "1"],  # 早于 last -> 丢弃
         ["1704067260000", "1.5", "2.5", "1", "2", "11", "11", "16", "1"],  # 晚于 last -> 保留
     ]
-    kernel = FakeKernel(candles=candles, max_ts=1704067200000)
+    # max(ts) 真机返回 Timestamp（毫秒换算按 UTC-naive）
+    kernel = FakeKernel(candles=candles, max_ts=pd.Timestamp("2024-01-01 00:00:00"))
     Reconciler(kernel).after_reconnect("business")
     writes = [df for table, df in kernel.dolphin.written if table == "candleStreamTable"]
     assert len(writes) == 1

@@ -1494,11 +1494,35 @@ class Dolphin:
                 return self.session.run(*script, clearMemory=clearMemory)
 
     def prepare_streams(self, table_names, recreate=False):
+        """按 schema 注册表幂等建表（recreate=True 时先删后建，会丢数据）。
+
+        所有表合并在单次 runScript 中执行（减少网络往返，避免逐表调用时
+        服务器瞬时无响应导致客户端阻塞），执行后统一校验缺表并报错。
+        """
         from .schema import STREAM_TABLES
-        for name in table_names:
-            spec = STREAM_TABLES[name]
-            self.runScript(spec.ensure_script(recreate=recreate))
-            print(f"prepared {name}!")
+        names = list(table_names)
+        unknown = [name for name in names if name not in STREAM_TABLES]
+        if unknown:
+            raise KeyError(f'未注册的流表: {unknown}')
+        blocks = [
+            f"try {{ {STREAM_TABLES[name].ensure_script(recreate=recreate)} }} "
+            f"catch(ex) {{ print(\"prepare {name} failed: \" + ex) }}"
+            for name in names
+        ]
+        checks = "\n".join(
+            f'if (!{STREAM_TABLES[name].exists_script()}) {{ missing = missing + "{name}" }}'
+            for name in names
+        )
+        script = f"""
+missing = string([])
+{chr(10).join(blocks)}
+{checks}
+missing
+"""
+        missing = self.runScript(script) or []
+        if missing:
+            raise RuntimeError(f'流表创建失败: {list(missing)}')
+        print(f"prepared {len(names)} stream tables!")
 
     def prepare_engines(self, engine_names):
         from .engines import ENGINE_SPECS, create_engine_script
