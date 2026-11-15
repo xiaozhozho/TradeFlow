@@ -12,17 +12,23 @@ pytestmark = pytest.mark.skipif(
 def test_archive_subscription_created():
     from tradeflow.stream.archive import ensure_archive
     from tradeflow.stream.dolphin import Dolphin
+    from tradeflow.stream.schema import STREAM_TABLES
 
-    ensure_archive()
-    workers = Dolphin().runScript("getStreamingStat().subWorkers")
+    d = Dolphin()
+    # 源流表可能被其他集成测试的 teardown 删除，这里幂等补建（存在则跳过）
+    d.prepare_streams(["tickStreamTable", "tradeStreamTable"])
+    ensure_archive(d)
+    workers = d.runScript("getStreamingStat().subWorkers")
     assert any("archiveTick" in str(row) for row in workers.to_dict("records"))
 
 
 def test_archive_writes_to_dfs():
     from tradeflow.stream.archive import ARCHIVE_DB, ensure_archive
     from tradeflow.stream.dolphin import Dolphin
+    from tradeflow.stream.schema import STREAM_TABLES
 
     d = Dolphin()
+    d.prepare_streams(["tickStreamTable", "tradeStreamTable"])
     ensure_archive(d)
     # 直接调用归档 handler 验证转换逻辑，不向流表写测试数据
     d.runScript("""

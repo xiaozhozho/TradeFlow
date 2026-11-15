@@ -9,6 +9,8 @@
 """
 from __future__ import annotations
 
+from datetime import datetime
+
 import pandas as pd
 
 from ..stream.schema import STREAM_TABLES
@@ -78,6 +80,9 @@ class Reconciler:
             if last is None:
                 # 流表无历史：无需补缺口，订阅恢复后自然续上
                 continue
+            last_ms = self._to_millis(last)
+            if last_ms is None:
+                continue
             packet = self.kernel.api.market.get_history_candlesticks(
                 instId, after="", before="", bar=bar, limit=str(limit),
             )
@@ -90,7 +95,7 @@ class Reconciler:
             df = pd.DataFrame(rows, columns=_CANDLE_COLUMNS)
             # REST 返回倒序（新到旧），只保留缺口之后的 bar
             df["_ts_ms"] = pd.to_numeric(df["ts"], errors="coerce")
-            df = df[df["_ts_ms"] > int(last)].sort_values("_ts_ms")
+            df = df[df["_ts_ms"] > last_ms].sort_values("_ts_ms")
             df = df.drop(columns=["_ts_ms"]).reset_index(drop=True)
             if df.empty:
                 continue
@@ -99,3 +104,18 @@ class Reconciler:
             frame = STREAM_TABLES["candleStreamTable"].normalize(df)
             self.kernel.dolphin.data2MemoryTable("candleStreamTable", frame)
             logger.info(f"补齐 {instId} 缺口 K 线 {len(frame)} 根")
+
+    @staticmethod
+    def _to_millis(value) -> int | None:
+        """DDB max(ts) 可能返回 datetime/Timestamp，也可能是毫秒数值。"""
+        if isinstance(value, pd.Timestamp):
+            if pd.isna(value):
+                return None
+            return int(value.value // 1_000_000)
+        if isinstance(value, datetime):
+            return int(pd.Timestamp(value).value // 1_000_000)
+        try:
+            result = int(value)
+        except (TypeError, ValueError):
+            return None
+        return result

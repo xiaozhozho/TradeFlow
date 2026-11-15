@@ -19,12 +19,32 @@ pytestmark = pytest.mark.skipif(
 
 
 def test_stream_tables_engines_and_dataflow():
+    from tradeflow.stream.archive import ARCHIVE_RULES
     from tradeflow.stream.dolphin import Dolphin
     from tradeflow.stream.engines import ENGINE_SPECS
     from tradeflow.stream.schema import STREAM_TABLES
 
     d = Dolphin()
-    # 先清理引擎与订阅（引擎持有输出表引用，会阻塞 dropStreamTable）
+
+    def teardown():
+        """恢复实例干净状态：摘除归档/引擎订阅、删引擎、删全部流表，
+        防止合成数据残留在流表与引擎状态中，污染后续真实运行。"""
+        for table, action, _target, _cols in ARCHIVE_RULES:
+            d.unsubscribeTable(table, action)
+        for spec in ENGINE_SPECS.values():
+            d.unsubscribeTable(spec.source, spec.action)
+            d.dropStreamEngine(spec.name)
+        for name, spec in STREAM_TABLES.items():
+            d.runScript(spec.drop_script())
+
+    try:
+        _run_stream_test(d, ENGINE_SPECS, STREAM_TABLES)
+    finally:
+        teardown()
+
+
+def _run_stream_test(d, ENGINE_SPECS, STREAM_TABLES):
+    # 前置清理：引擎持有输出表引用，活跃订阅会阻塞 dropStreamTable
     for spec in ENGINE_SPECS.values():
         d.unsubscribeTable(spec.source, spec.action)
         d.dropStreamEngine(spec.name)
