@@ -49,7 +49,7 @@ class Trader:
     def _symbol_from_db(self, instId: str):
         try:
             frame = self.kernel.dolphin.runScript(
-                f"select top 1 lotSz, minSz, tickSz from productStreamTable "
+                f"select top 1 lotSz, minSz, tickSz, ctVal from productStreamTable "
                 f"where instId='{instId}'"
             )
         except Exception:
@@ -61,6 +61,7 @@ class Trader:
             "lotSz": str(row["lotSz"]),
             "minSz": str(row["minSz"]),
             "tickSz": str(row["tickSz"]),
+            "ctVal": str(row.get("ctVal", 0)),
         }
 
     def _symbol_from_rest(self, instId: str):
@@ -78,6 +79,7 @@ class Trader:
             "lotSz": str(item.get("lotSz", "1")),
             "minSz": str(item.get("minSz", "0")),
             "tickSz": str(item.get("tickSz", "0")),
+            "ctVal": str(item.get("ctVal", "0")),
         }
 
     # ---------- 规划 ----------
@@ -110,6 +112,47 @@ class Trader:
         """生成 OKX 允许的字母数字 clOrdId（<=32 字符），便于订单关联。"""
         return f"tf{int(time.time() * 1000)}{random.randint(1000, 9999)}"
 
+    # ---------- 保证金换算与限额 ----------
+
+    def lastPrice(self, instId: str) -> float:
+        """最新成交价（shareTickTable 快照）。"""
+        frame = self.kernel.dolphin.runScript(
+            f"select * from shareTickTable where instId='{instId}'"
+        )
+        if frame is None or frame.empty:
+            raise ValueError(f"无 {instId} 的 tick 快照，无法定价")
+        price = float(frame.iloc[0]["last"] or 0)
+        if price <= 0:
+            raise ValueError(f"{instId} 最新价无效: {price}")
+        return price
+
+    def sizeByMargin(self, instId: str, margin_usdt, price=None) -> float:
+        """保证金 -> 张数：margin x 杠杆 / (价格 x 合约面值)；含下单前限额校验。"""
+        spec = self.symbolInfo(instId)
+        ct_val = float(spec.get("ctVal") or 0)
+        if ct_val <= 0:
+            raise ValueError(f"{instId} 缺少合约面值 ctVal")
+        price = float(price) if price else self.lastPrice(instId)
+        leverage = float(getattr(self.kernel.risk, "lever", 1) or 1)
+        margin = float(margin_usdt)
+        self._check_margin_limits(instId, margin, price, ct_val, leverage)
+        return margin * leverage / (price * ct_val)
+
+    def _check_margin_limits(self, instId, margin, price, ct_val, leverage):
+        """下单前限额：单笔保证金上限 + 单品种持仓保证金上限。"""
+        max_order = getattr(self.kernel, "max_order_margin", None)
+        if max_order is not None and margin > max_order:
+            raise ValueError(f"单笔保证金 {margin:g}U 超过上限 {max_order:g}U")
+        max_position = getattr(self.kernel, "max_position_margin", None)
+        if max_position is not None:
+            position = self.getPosition(instId) or {}
+            current = abs(float(position.get("pos") or 0))
+            used = current * ct_val * price / leverage if leverage else 0.0
+            if used + margin > max_position:
+                raise ValueError(
+                    f"持仓保证金 {used:.2f}U + 本单 {margin:g}U 超过上限 {max_position:g}U"
+                )
+
     # ---------- 下单 ----------
 
     def buy(self, instId: str, sz, px=None, ordType: str = "market",
@@ -136,6 +179,49 @@ class Trader:
             posSide=posSide, reduceOnly="true" if reduceOnly else "",
         )
         return packet
+
+    # ---------- 批量与撤单 ----------
+
+    def batchBuy(self, orders: list) -> list:
+        """批量买入：orders=[{"instId", "sz", "px"?, "ordType"?, "tdMode"?, "posSide"?, "reduceOnly"?}]。"""
+        return self._place_batch("buy", orders)
+
+    def batchSell(self, orders: list) -> list:
+        """批量卖出，字段同 batchBuy。"""
+        return self._place_batch("sell", orders)
+
+    def _place_batch(self, side, orders):
+        payload = []
+        for order in orders:
+            instId = order["instId"]
+            spec = self.symbolInfo(instId)
+            ordType = order.get("ordType", "market")
+            price = ""
+            if ordType == "limit":
+                if order.get("px") is None:
+                    raise ValueError(f"{instId} 限价单需要提供 px")
+                price = self.roundPrice(order["px"], spec)
+            payload.append({
+                "instId": instId,
+                "tdMode": order.get("tdMode", "cross"),
+                "side": side,
+                "ordType": ordType,
+                "sz": self.roundSize(instId, order["sz"], spec),
+                "px": price,
+                "clOrdId": order.get("clOrdId") or self.makeClOrdId(),
+                "posSide": order.get("posSide", ""),
+                "reduceOnly": "true" if order.get("reduceOnly") else "",
+            })
+        packets = []
+        for start in range(0, len(payload), 20):  # OKX 单次批量上限 20
+            packets.append(
+                self.kernel.api.trade.place_multiple_orders(payload[start:start + 20])
+            )
+        return packets[0] if len(packets) == 1 else packets
+
+    def cancel(self, instId: str, ordId: str = "", clOrdId: str = ""):
+        """撤单（ordId 或 clOrdId 二选一）。"""
+        return self.kernel.api.trade.cancel_order(instId, ordId=ordId, clOrdId=clOrdId)
 
     # ---------- 平仓与查询 ----------
 

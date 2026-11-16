@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from tradeflow.kernel import Kernel
+from tradeflow.strategy import Strategy
 
 
 class FakeDolphin:
@@ -51,6 +52,28 @@ def test_candle_channels_default(kernel):
     assert names == {"candle1m", "candle5m"}
     for item in kernel.candleChannels:
         assert item["instId"] in kernel.instIds
+
+
+def test_candles_param(monkeypatch):
+    monkeypatch.setattr("tradeflow.kernel.Dolphin", FakeDolphin)
+    kernel = Kernel(flag="1", private=False, instIds={"BTC-USDT-SWAP"},
+                    candles=("candle1m", "candle15m"))
+    names = {item["channel"] for item in kernel.candleChannels}
+    assert names == {"candle1m", "candle15m"}
+    assert "candle15m" in kernel.enabled_channels()
+
+
+def test_strategy_candles_merged(monkeypatch):
+    monkeypatch.setattr("tradeflow.kernel.Dolphin", FakeDolphin)
+
+    class ExtraCandleStrategy(Strategy):
+        instIds = {"BTC-USDT-SWAP"}
+        candles = ("candle15m",)
+
+    kernel = Kernel(flag="1", private=False, instIds=set())
+    kernel.addStrategy(ExtraCandleStrategy)
+    assert "candle15m" in kernel.candles
+    assert "candle1m" in kernel.candles  # 默认周期保留
 
 
 def test_index_tickers_converts_instid(kernel):

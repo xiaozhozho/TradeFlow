@@ -8,7 +8,7 @@ from .trade import Trader
 from .utils.log import get_logger
 from .utils.email import Email
 from .stream.dolphin import Dolphin
-from .stream.engines import ENGINE_NAMES, ENGINE_SPECS
+from .stream.engines import ENGINE_SPECS
 from .subscribe import PublicSubscribe,CandleSubscribe,PrivateSubscribe,SubscribeManager
 from .subscribe.reconcile import Reconciler
 from .subscribe.channels import (
@@ -52,7 +52,8 @@ class Kernel:
     """
     def __init__(self, pause:int=1, instIds=set(), flag='1', warmup:int=320, private:bool=True,
                  market=None, depth=None, options=False, algo=False, recreate_tables=False,
-                 max_errors:int=10, dolphin=None, api=None):
+                 max_errors:int=10, dolphin=None, api=None,
+                 candles=None, archive=False, max_order_margin=None, max_position_margin=None):
         """ kernel对象, 框架核心部分, 高度适配和集成功能
         params:
             pause: 策略轮询间隔（秒）
@@ -68,6 +69,11 @@ class Kernel:
             max_errors: 策略连续异常多少次后自动停用（默认 10）
             dolphin: 可选注入的 DolphinDB 客户端（离线测试用 FakeDolphin）
             api: 可选注入的 OKX API 客户端（离线测试用 FakeApi）
+            candles: K 线周期元组，默认 ("candle1m", "candle5m")；
+                     策略类属性 candles 会并入（多周期）
+            archive: 是否将 tick/trade 归档到 dfs://market（回测数据）
+            max_order_margin: 单笔保证金上限（USDT），None 不限
+            max_position_margin: 单品种持仓保证金上限（USDT），None 不限
         """
         self.api = api if api is not None else Api(flag=flag)  # api: 使用okx-rest-api进行低频操作
         self.email = Email()             # email: 定时发送交易、账户信息
@@ -84,6 +90,10 @@ class Kernel:
         self.options_enabled = options   # bool: 期权频道
         self.algo_enabled = algo         # bool: 策略委托频道
         self.recreate_tables = recreate_tables  # bool: 重建流表
+        self.candles = tuple(candles) if candles else DEFAULT_CANDLE_CHANNELS  # tuple: K 线周期
+        self.archive_enabled = archive     # bool: tick/trade 归档到 dfs://market
+        self.max_order_margin = max_order_margin          # float|None: 单笔保证金上限（USDT）
+        self.max_position_margin = max_position_margin    # float|None: 单品种持仓保证金上限（USDT）
         self.reconciler = Reconciler(self)   # Reconciler: 断线对账（REST 快照覆盖 + K 线补齐）
         self.manager = None              # SubscribeManager: 订阅编排
         self.logger = get_logger()       # logger: 日志记录
@@ -105,21 +115,24 @@ class Kernel:
         self._loop.run_forever()
 
     def addStrategy(self, strategy_class):
-        """ 
-        添加策略, 同时将策略参数更新到kernel 
+        """
+        添加策略, 同时将策略参数更新到kernel
         params:
             strategy_class: 策略类
         """
         strategy = strategy_class(self)
         self.strategies.append(strategy)
         self.instIds = self.instIds.union(strategy.instIds)
+        declared = tuple(getattr(strategy, "candles", ()) or ())
+        if declared:
+            self.candles = tuple(dict.fromkeys(self.candles + declared))
 
     # ***********   频道编排（频道清单唯一来源在 subscribe/channels.py）   **************
 
     def enabled_channels(self) -> set:
         """当前配置下会订阅的全部频道名。"""
         names = set(self.market or DEFAULT_MARKET_CHANNELS)
-        names.update(DEFAULT_CANDLE_CHANNELS)
+        names.update(self.candles)
         if self.depth:
             names.add(self.depth)
         if self.options_enabled:
@@ -171,11 +184,11 @@ class Kernel:
 
     @property
     def candleChannels(self):
-        """ K线行情频道订阅 channels（业务端点） """
+        """ K线行情频道订阅 channels（业务端点，周期来自 candles 参数/策略声明） """
         return [
             {"channel": channel, "instId": instId}
             for instId in self.instIds
-            for channel in DEFAULT_CANDLE_CHANNELS
+            for channel in self.candles
         ]
 
     @property
@@ -212,12 +225,18 @@ class Kernel:
         self.algo = self.manager.algo
 
     def prepare(self):
-        """dolphindb中运行预处理脚本：按频道建表 + 建流引擎"""
+        """dolphindb中运行预处理脚本：按频道建表 + 声明式指标 + 建流引擎"""
         if self.recreate_tables:
             self._cleanup_engines_before_recreate()
+        from .stream.indicators import register_strategy_indicators
         tables = prepare_table_set(self.enabled_channels())
+        custom_tables, _ = register_strategy_indicators(self.strategies)
+        tables |= custom_tables
         self.dolphin.prepare_streams(tables, recreate=self.recreate_tables)
-        self.dolphin.prepare_engines(ENGINE_NAMES)
+        self.dolphin.prepare_engines(tuple(ENGINE_SPECS))
+        if self.archive_enabled:
+            from .stream.archive import ensure_archive
+            ensure_archive(self.dolphin)
 
     def _cleanup_engines_before_recreate(self):
         """重建流表前先摘除引擎订阅，否则活跃订阅会阻塞 dropStreamTable。"""
@@ -287,7 +306,7 @@ class Kernel:
         )
 
     def health(self):
-        """ 订阅健康指标（连接/重连/写队列）+ 风控与策略运行统计 """
+        """ 订阅健康指标（连接/重连/写队列）+ 风控/策略统计 + 数据时效 """
         stats = self.manager.health() if self.manager is not None else {}
         stats["risk"] = {"errors": self._risk_errors}
         stats["strategies"] = {
@@ -297,7 +316,30 @@ class Kernel:
             }
             for index, strategy in enumerate(self.strategies)
         }
+        stats["freshness"] = self._data_freshness()
         return stats
+
+    def _data_freshness(self) -> dict:
+        """tick/1m K 线最新数据距今秒数（2 秒缓存；查询失败为 None）。"""
+        now_monotonic = time.monotonic()
+        if getattr(self, "_freshness", None) and now_monotonic - getattr(self, "_freshness_at", 0) < 2:
+            return dict(self._freshness)
+        import pandas as pd
+
+        now = pd.Timestamp.now(tz="UTC").tz_localize(None)
+        freshness = {}
+        for key, table in (("tick", "tickStreamTable"), ("candle1m", "candleConfirmStreamTable")):
+            try:
+                latest = self.dolphin.runScript(f"exec max(ts) from {table}")
+                if latest is None or pd.isna(latest):
+                    freshness[key] = None
+                else:
+                    freshness[key] = round((now - pd.Timestamp(latest)).total_seconds(), 1)
+            except Exception:
+                freshness[key] = None
+        self._freshness_at = now_monotonic
+        self._freshness = freshness
+        return dict(freshness)
 
     def log(self, msg):
         """ 输出日志 """

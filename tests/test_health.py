@@ -77,12 +77,13 @@ def test_manager_health_shape(manager):
         assert health[endpoint]["reconnect_count"] == 0
         assert isinstance(health[endpoint]["channels"], list)
     assert health["writer"]["written"] == 0
-    # Kernel.health 透传连接指标，并附加风控/策略统计
+    # Kernel.health 透传连接指标，并附加风控/策略统计与数据时效
     kernel_health = manager.kernel.health()
     assert kernel_health["public"] == health["public"]
     assert kernel_health["writer"] == health["writer"]
     assert "strategies" in kernel_health
     assert "risk" in kernel_health
+    assert set(kernel_health["freshness"]) == {"tick", "candle1m"}
 
 
 def test_manager_subscribe_disabled_endpoint_raises(manager):

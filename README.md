@@ -54,6 +54,10 @@ python -m strategy.example
 | `recreate_tables` | False | prepare() 时删除重建全部流表（**会清空流表数据**，升级/开发用） |
 | `max_errors` | 10 | 策略连续异常多少次后自动停用（成功一次即清零） |
 | `dolphin` / `api` | None | 依赖注入（离线测试用 `FakeDolphin` / `FakeApi`） |
+| `candles` | ("candle1m","candle5m") | K 线周期元组；策略类属性 `candles` 会自动并入（多周期） |
+| `archive` | False | 是否将 tick/trade 归档到 `dfs://market`（回测数据） |
+| `max_order_margin` | None | 单笔保证金上限（USDT），None 不限 |
+| `max_position_margin` | None | 单品种持仓保证金上限（USDT），None 不限 |
 
 动态订阅（不重启进程）：
 
@@ -82,6 +86,7 @@ TradeFlow/
 │   ├── stream/                 # DolphinDB 连接、表结构与引擎
 │   │   ├── schema.py           # 流表/快照表结构唯一来源（TableSpec）
 │   │   ├── engines.py          # 流引擎定义（快照/响应式状态/时间序列）
+│   │   ├── indicators.py       # 策略声明式指标（动态表/引擎生成）
 │   │   ├── archive.py          # 流表 -> DFS 历史归档（P1）
 │   │   ├── script.py           # 建表脚本（由 schema.py 生成）
 │   │   └── dolphin.py          # DolphinDB 连接与执行
@@ -96,6 +101,7 @@ TradeFlow/
 │   └── setting.py              # 全局配置
 ├── strategy/                   # 量化策略工作区（不随包发布）
 │   ├── example.py              # 策略模板
+│   ├── ma_cross.py             # MA5/MA15 交叉模拟盘策略示例
 │   └── README.md
 ├── tests/                      # 单元测试 + DolphinDB 集成测试
 ├── .env                        # 本地密钥（已忽略，不提交）
@@ -181,7 +187,47 @@ class MyStrategy(Strategy):
 - 数量按合约 `lotSz` 向下取整并校验 `minSz`；限价单价格按 `tickSz` 四舍五入；
 - 自动生成 `clOrdId`（字母数字，≤32 字符），便于与 orders 频道/快照表关联；
 - 合约规格优先读 `productStreamTable`，未命中回退 REST `get_instruments` 并缓存；
+- `buyByMargin/sellByMargin(instId, margin_usdt)`：张数 = 保证金 x 杠杆 /
+  (价格 x 合约面值 ctVal)，下单前校验 `max_order_margin` / `max_position_margin`；
+- `kernel.trader.batchBuy/batchSell`（按 20 条/批）与 `cancel(instId, ordId|clOrdId)`；
 - 返回 OKX REST 原始应答，`code == "0"` 表示请求被接受。
+
+## 多周期与声明式指标
+
+策略通过类属性声明所需周期与指标，框架在 `prepare()` 时自动完成订阅、建表、建流引擎：
+
+```python
+class MyStrategy(Strategy):
+    instIds = {"BTC-USDT-SWAP"}
+    candles = ("candle1m", "candle15m")                    # 多周期并入 Kernel 订阅
+    indicators = {"ma": [5, 15], "rsi": [14], "boll": [(20, 2)]}
+
+    def scan(self):
+        ind = self.getIndicators("candle1m", limit=3, instId="BTC-USDT-SWAP")
+```
+
+- 支持指标：`ma / ema / mstd / high / low / volma / macd / rsi / atr / boll`
+  （表达式模板见 `tradeflow/stream/indicators.py`）；表达式只用 DolphinDB 内置滚动函数，
+  不依赖 ta 插件（3.00.6 实测 `ta::` 不可用，`prev()` 在响应式引擎可用）；
+- 自动生成：`indicator_<类名>StreamTable`（指标流表）+ `share<类名>IndicatorTable`
+  （最新快照）+ `<类名>IndicatorEngine`（响应式引擎，keyColumn=instId+channel，
+  一次覆盖该策略全部周期）；
+- 指标列名规则：`ma_5`、`rsi_14`、`macd_12_26`、`boll_20_2_up/mid/dn`；
+- 未声明 `indicators` 的策略读取框架默认指标表（`candleIndicatorStreamTable`：
+  ma5/10/20、ema12/26、macd、mstd20、volMa5、high20/low20），行为与旧版本一致。
+
+## 策略数据访问
+
+Strategy 内置查询方法（无需手写 DolphinDB SQL）：
+
+| 方法 | 说明 |
+|---|---|
+| `getBars(channel, limit, instId=None)` | 最近 N 根已收盘 K 线（按品种分组、升序、去重） |
+| `getTick(instId)` | 单品种最新 tick 快照（dict，无数据返回 `{}`） |
+| `getIndicators(channel, limit, instId=None)` | 最近 N 行指标（自动选择默认/策略专属指标表） |
+| `getBook(instId, source="books5", levels=5)` | 最新盘口快照 `{ts, bids, asks}` |
+| `getOrders(instId=None, state=None)` | 订单快照列表（shareOrderTable） |
+| `buyByMargin / sellByMargin(instId, margin_usdt)` | 按保证金下单（张数自动换算 + 限额校验） |
 
 ## 离线开发与策略测试
 
@@ -231,6 +277,17 @@ TRADEFLOW_TEST_DDB=1 TRADEFLOW_TEST_DDB_ALLOW_DROP=1 pytest tests/integration/te
 TRADEFLOW_TEST_DDB=1 pytest tests/integration/test_archive.py -q
 ```
 
+## 从 3.5.0 升级
+
+- 新增多周期与声明式指标：`Kernel(candles=...)`、`Strategy.candles/indicators`；
+  未声明时行为与 3.5.0 完全一致（默认仍订阅 1m/5m、读默认指标表）；
+- 新增 `Strategy.getBars/getTick/getIndicators/getBook/getOrders` 与
+  `buyByMargin/sellByMargin`；`kernel.trader` 增加
+  `sizeByMargin/lastPrice/batchBuy/batchSell/cancel`；
+- `Kernel` 新增 `max_order_margin / max_position_margin / archive` 参数；
+- `health()` 新增 `freshness`（tick 与 1m K 线最新数据距今秒数）；
+- `prepare()` 建引擎改为按注册表当前内容创建（含策略声明生成的自定义引擎）。
+
 ## 从 3.4.0 升级
 
 - `Kernel` 的 `flag` 默认值改为 `'1'`（模拟盘）；依赖"默认实盘"的调用需显式传 `flag='0'`；
@@ -251,6 +308,21 @@ TRADEFLOW_TEST_DDB=1 pytest tests/integration/test_archive.py -q
 - 断线重连后自动进行 REST 对账（订单/持仓/账户）与 K 线缺口补齐，无需人工干预。
 
 ## 版本记录
+
+## version 3.6.0
+
+- 多周期一等支持：`Kernel(candles=...)` 与 `Strategy.candles` 声明式周期
+  （任意 `candle*` 频道，15m/1h 等直接可用；指标引擎按 instId+channel 自动分组）；
+- 声明式指标：`Strategy.indicators = {"ma": [5, 15], "rsi": [14], ...}`，
+  `prepare()` 按策略自动生成指标流表/快照表/响应式引擎
+  （表达式仅用 DDB 内置滚动函数 + prev()，实测 ta 扩展不可用）；
+- 策略数据访问 API：`getBars / getTick / getIndicators / getBook / getOrders`；
+- 保证金下单：`buyByMargin / sellByMargin` 与 `trader.sizeByMargin/lastPrice`，
+  下单前校验 `max_order_margin / max_position_margin`；
+- Trader 批量下单（20/批）、撤单 `cancel`；
+- `Kernel(archive=True)` 一键接入 tick/trade 归档到 `dfs://market`；
+- `health()` 新增 `freshness` 数据时效（tick / 1m K 线距今秒数，2s 缓存）；
+- 策略示例 `strategy/ma_cross.py` 改为声明式指标 + 保证金下单。
 
 ## version 3.5.0
 

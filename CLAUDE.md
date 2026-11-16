@@ -4,10 +4,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 项目概览
 
-TradeFlow：Python 量化交易框架（OKX WebSocket 行情订阅 → DolphinDB 流数据存储 → 策略调度），以第三方包 `tradeflow` 形式提供，当前版本 3.5.0，要求 Python >= 3.10。项目文档、注释、日志均为中文。
+TradeFlow：Python 量化交易框架（OKX WebSocket 行情订阅 → DolphinDB 流数据存储 → 策略调度），以第三方包 `tradeflow` 形式提供，当前版本 3.6.0，要求 Python >= 3.10。项目文档、注释、日志均为中文。
 
 - `tradeflow/` — 发布包（`pip install -e .`，setuptools 仅打包 `tradeflow*`）
-- `strategy/` — 策略工作区，不随包发布（`example.py` 为模板，`check_stream_tables.py` 为落库链路检查脚本）
+- `strategy/` — 策略工作区，不随包发布（`example.py` 为落库链路模板，`ma_cross.py` 为 MA5/MA15 交叉模拟盘策略示例，`check_stream_tables.py` 为落库链路检查脚本）
 - `tests/` — 单元测试（离线）；`tests/integration/` 为 DolphinDB 真机集成测试（环境变量门控）
 - `docs/superpowers/plans/` — 实施计划文档
 
@@ -50,7 +50,7 @@ OKX WebSocket → Subscribe 基类（subscribe/base.py：收包/心跳/指数退
 
 ### Kernel / Strategy 生命周期
 
-- `Kernel` 关键参数：`flag`（**'0' 实盘 / '1' 模拟盘，默认 '1' 模拟盘**；实盘启动会打印警告）、`pause`、`warmup`、`private`、`market`、`depth`、`options`、`algo`、`recreate_tables`、`max_errors`（策略连续异常停用阈值，默认 10）；`dolphin`/`api` 为离线测试的依赖注入入口。
+- `Kernel` 关键参数：`flag`（**'0' 实盘 / '1' 模拟盘，默认 '1' 模拟盘**；实盘启动会打印警告）、`pause`、`warmup`、`private`、`market`、`depth`、`options`、`algo`、`recreate_tables`、`max_errors`（策略连续异常停用阈值，默认 10）、`candles`（K 线周期，默认 1m/5m，策略类属性 `candles` 自动并入）、`archive`（tick/trade 归档 dfs://market）、`max_order_margin`/`max_position_margin`（下单前保证金限额）；`dolphin`/`api` 为离线测试的依赖注入入口。
 - `kernel.addStrategy(cls)` 实例化策略并合并 `strategy.instIds` 到 `kernel.instIds`。
 - `kernel.start()` → `init()`：`strategy.preinit()` → `prepare()`（按启用频道建流表 + 建引擎）→ `subscribe()` → 设置持仓模式 → `sleep(warmup)`。
 - `Strategy.run()` 首次调用执行 `init()`（只执行一次），之后每次 `scan()`；策略逻辑写在 `scan()`。
@@ -73,7 +73,9 @@ OKX WebSocket → Subscribe 基类（subscribe/base.py：收包/心跳/指数退
 - `subscribe/reconcile.py`：断线后 REST 对账（订单/持仓/账户）+ K 线缺口补齐。
 - `subscribe/orderbook.py`：`books` 增量盘口序号校验。
 - `subscribe/legacy.py`：旧实现，仅为兼容保留，新代码不依赖。
-- `trade.py`：`kernel.trader` 交易便捷层——数量按 `lotSz` 向下取整并校验 `minSz`、价格按 `tickSz` 规整、自动生成 `clOrdId`；合约规格优先读 `productStreamTable`，未命中回退 REST 并缓存。`Strategy` 暴露 `buy/sell/close/getPosition(s)/getAccount` 薄封装。
+- `stream/indicators.py`：声明式指标——`Strategy.indicators = {"ma": [5,15], "rsi": [14], ...}` 在 `prepare()` 时自动生成 `indicator_<Cls>StreamTable` + `share<Cls>IndicatorTable` + `<Cls>IndicatorEngine`。表达式模板只用 DDB 内置滚动函数；`ta::rsi/atr/boll` 在 3.00.6 不存在，但 `prev()` 在 reactive engine 中可用（RSI/ATR 依赖它，已实测）。
+- `trade.py`：`kernel.trader` 交易便捷层——数量按 `lotSz` 向下取整并校验 `minSz`、价格按 `tickSz` 规整、自动生成 `clOrdId`；合约规格（含 `ctVal`）优先读 `productStreamTable`，未命中回退 REST 并缓存；`sizeByMargin`（保证金→张数，校验 `max_order_margin`/`max_position_margin`）、`batchBuy/batchSell`（20/批）、`cancel`。`Strategy` 暴露 `buy/sell/buyByMargin/sellByMargin/close/getPosition(s)/getAccount` 薄封装。
+- `strategy.py` 数据访问方法：`getBars`（已收盘 K 线，按品种升序去重）、`getTick`、`getIndicators`（声明指标后读策略专属表，否则读默认指标表）、`getBook`（最新盘口快照）、`getOrders`。策略不应手写 DolphinDB SQL。
 - `simulation.py`：离线开发工具 `FakeDolphin`（pandas 表模拟 `runScript` 常见查询，未覆盖语句抛 `NotImplementedError`）与 `FakeApi`（记录下单/平仓调用）。配合 `Kernel(dolphin=..., api=...)` 注入，可不连 DolphinDB / OKX 跑完整策略。
 - `stream/archive.py`：tick/trade 归档到 `dfs://market`。docstring 里列的 DolphinDB 写法约束均为 3.00.6 实测结论（如 COMPO 需两个子域、必须函数式 `createPartitionedTable`、handler 不能引用全局变量），改动前先读。
 - `stream/dolphin.py`：`Dolphin` 是单例（`__new__` + `_initialized` 守卫），脚本执行加锁；其他线程必须用 `dolphin.newSession()` 而非共享 session。
@@ -82,7 +84,9 @@ OKX WebSocket → Subscribe 基类（subscribe/base.py：收包/心跳/指数退
 ## 关键约定与易踩坑
 
 - 时间语义：全库统一 **UTC-naive TIMESTAMP**（OKX 毫秒时间戳），不要写入本地时间。
-- `Kernel.run()` 对风控与每个策略做异常隔离：异常只记录并跳过本轮，策略连续异常达 `max_errors` 自动停用（成功一次清零），计数在 `health()["strategies"]` / `health()["risk"]`。
+- 声明式指标：策略类属性 `indicators` 生成自定义指标表/引擎；列名规则 `ma_5`/`rsi_14`/`boll_20_2_up`；未声明时读默认 `candleIndicatorStreamTable`（行为兼容）。
+- 多周期：任意 `candle*` 频道号（candle15m/1H 等）已由 `channels.py` 兜底映射到相同表结构，指标引擎按 `(instId, channel)` 分组，无需额外适配。
+- `Kernel.run()` 对风控与每个策略做异常隔离：异常只记录并跳过本轮，策略连续异常达 `max_errors` 自动停用（成功一次清零），计数在 `health()["strategies"]` / `health()["risk"]`；`health()["freshness"]` 给出 tick/1m K 线数据时效（秒）。
 - `prepare()` 的建表集合 = 核心表 ∪ 启用频道表 ∪ **全部流引擎 source/target 表**（引擎表不隶属任何频道，必须无条件创建，否则新库首次启动会在建引擎时失败）。
 - `flag` 默认 `'1'`（模拟盘）；`'0'` 实盘在 Kernel 构造时打印警告。
 - `recreate_tables=True` 会清空全部流表；重建前 Kernel 会先摘除流引擎订阅（活跃订阅会阻塞 `dropStreamTable`）。

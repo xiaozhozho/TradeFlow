@@ -62,8 +62,9 @@ class StubKernel:
         return frame.set_index("ccy").T.to_dict()
 
 
-def product_frame(lotSz="0.1", minSz="0.1", tickSz="0.01"):
-    return pd.DataFrame([{"lotSz": float(lotSz), "minSz": float(minSz), "tickSz": float(tickSz)}])
+def product_frame(lotSz="0.1", minSz="0.1", tickSz="0.01", ctVal="0.01"):
+    return pd.DataFrame([{"lotSz": float(lotSz), "minSz": float(minSz),
+                          "tickSz": float(tickSz), "ctVal": float(ctVal)}])
 
 
 def position_frame(**overrides):

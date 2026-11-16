@@ -74,6 +74,14 @@ class FakeDolphin:
         if match:
             return 0 if match.group(1) not in self.tables else len(self.tables[match.group(1)])
 
+        # 2b) exec max(col) from T
+        match = re.fullmatch(r"exec\s+max\((\w+)\)\s+from\s+(\w+)", text, re.IGNORECASE)
+        if match:
+            column, table = match.groups()
+            if table not in self.tables or self.tables[table].empty:
+                return None
+            return self.tables[table][column].max()
+
         # 3) exec col from T order by C asc|desc limit N
         match = re.fullmatch(
             r"exec\s+(\w+)\s+from\s+(\w+)\s+order by\s+(\w+)\s+(asc|desc)\s+limit\s+(\d+)",
@@ -100,30 +108,61 @@ class FakeDolphin:
             frame = frame.groupby(group_col, sort=False).head(int(limit))
             return frame.sort_values(order_col).reset_index(drop=True)
 
-        # 5) select top N cols from T [where col='v']
+        # 4b) select top N ... where ... [and ...] context by G csort T desc
         match = re.fullmatch(
-            r"select\s+top\s+(\d+)\s+([\w, ]+?)\s+from\s+(\w+)"
-            r"(?:\s+where\s+(\w+)='([^']*)')?",
+            r"select\s+top\s+(\d+)\s+(\*|[\w, ]+?)\s+from\s+(\w+)"
+            r"\s+where\s+(\w+)='([^']*)'(?:\s+and\s+(\w+)='([^']*)')?"
+            r"\s+context by\s+(\w+)\s+csort\s+(\w+)\s+desc",
             text, re.IGNORECASE,
         )
         if match:
-            limit, columns, table, where_col, where_val = match.groups()
+            (limit, columns, table, wcol1, wval1, wcol2, wval2,
+             group_col, sort_col) = match.groups()
             frame = self._table(table)
-            if where_col:
-                frame = frame[frame[where_col] == where_val]
+            frame = frame[frame[wcol1] == wval1]
+            if wcol2:
+                frame = frame[frame[wcol2] == wval2]
+            frame = frame.sort_values(sort_col, ascending=False)
+            frame = frame.groupby(group_col, sort=False).head(int(limit))
+            frame = frame.sort_values(sort_col).reset_index(drop=True)
+            if columns.strip() != "*":
+                selected = [c.strip() for c in columns.split(",") if c.strip()]
+                frame = frame[selected]
+            return frame
+
+        # 5) select top N cols from T [where c1='v1' (and c2='v2')] [order by C asc|desc]
+        match = re.fullmatch(
+            r"select\s+top\s+(\d+)\s+([\w, ]+?)\s+from\s+(\w+)"
+            r"(?:\s+where\s+(\w+)='([^']*)'(?:\s+and\s+(\w+)='([^']*)')?)?"
+            r"(?:\s+order by\s+(\w+)\s+(asc|desc))?",
+            text, re.IGNORECASE,
+        )
+        if match:
+            (limit, columns, table, wcol1, wval1, wcol2, wval2,
+             order_col, direction) = match.groups()
+            frame = self._table(table)
+            if wcol1:
+                frame = frame[frame[wcol1] == wval1]
+            if wcol2:
+                frame = frame[frame[wcol2] == wval2]
+            if order_col:
+                frame = frame.sort_values(order_col, ascending=direction.lower() == "asc")
             columns = [c.strip() for c in columns.split(",") if c.strip()]
             return frame[columns].head(int(limit)).reset_index(drop=True)
 
-        # 6) select * from T [where col='v']
+        # 6) select * from T [where c1='v1' (and c2='v2')]
         match = re.fullmatch(
-            r"select\s+\*\s+from\s+(\w+)(?:\s+where\s+(\w+)='([^']*)')?",
+            r"select\s+\*\s+from\s+(\w+)"
+            r"(?:\s+where\s+(\w+)='([^']*)'(?:\s+and\s+(\w+)='([^']*)')?)?",
             text, re.IGNORECASE,
         )
         if match:
-            table, where_col, where_val = match.groups()
+            table, wcol1, wval1, wcol2, wval2 = match.groups()
             frame = self._table(table)
-            if where_col:
-                frame = frame[frame[where_col] == where_val]
+            if wcol1:
+                frame = frame[frame[wcol1] == wval1]
+            if wcol2:
+                frame = frame[frame[wcol2] == wval2]
             return frame.reset_index(drop=True)
 
         raise NotImplementedError(f"FakeDolphin 暂不支持的查询: {text}")
@@ -135,11 +174,13 @@ class FakeDolphin:
 
 
 class FakeTradeApi:
-    """记录下单/平仓调用并返回成功应答。"""
+    """记录下单/平仓/批量/撤单调用并返回成功应答。"""
 
     def __init__(self):
         self.orders = []
         self.closes = []
+        self.batches = []
+        self.cancels = []
 
     def place_order(self, **kwargs):
         self.orders.append(dict(kwargs))
@@ -147,11 +188,19 @@ class FakeTradeApi:
             {"ordId": str(len(self.orders)), "clOrdId": kwargs.get("clOrdId", "")},
         ]}
 
+    def place_multiple_orders(self, payload):
+        self.batches.append([dict(item) for item in payload])
+        return {"code": "0", "msg": "", "data": [{} for _ in payload]}
+
     def close_positions(self, instId, mgnMode, posSide="", ccy="", **kwargs):
         self.closes.append(
             {"instId": instId, "mgnMode": mgnMode, "posSide": posSide, "ccy": ccy}
         )
         return {"code": "0", "msg": "", "data": []}
+
+    def cancel_order(self, instId, ordId="", clOrdId=""):
+        self.cancels.append({"instId": instId, "ordId": ordId, "clOrdId": clOrdId})
+        return {"code": "0", "msg": "", "data": [{}]}
 
 
 class FakeApi:

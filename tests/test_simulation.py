@@ -53,6 +53,52 @@ def test_fake_dolphin_rejects_unknown_script(tables):
         dolphin.runScript("select ts, price from someUnknownTable context by x")
 
 
+def test_fake_dolphin_top_order_by_with_two_filters(tables):
+    tables = dict(tables)
+    tables["candleConfirmStreamTable"] = pd.DataFrame([
+        {"instId": "BTC-USDT-SWAP", "channel": "candle1m",
+         "ts": pd.Timestamp("2026-01-01 00:00:00") + pd.Timedelta(minutes=i),
+         "c": float(i)}
+        for i in range(5)
+    ] + [
+        {"instId": "ETH-USDT-SWAP", "channel": "candle1m",
+         "ts": pd.Timestamp("2026-01-01 00:09:00"), "c": 99.0},
+    ])
+    dolphin = FakeDolphin(tables)
+    frame = dolphin.runScript(
+        "select top 2 ts, c from candleConfirmStreamTable "
+        "where channel='candle1m' and instId='BTC-USDT-SWAP' order by ts desc"
+    )
+    assert list(frame.columns) == ["ts", "c"]
+    assert list(frame["c"]) == [4.0, 3.0]
+
+
+def test_fake_dolphin_context_top_per_group():
+    start = pd.Timestamp("2026-01-01 00:00:00")
+    rows = []
+    for inst in ("BTC-USDT-SWAP", "ETH-USDT-SWAP"):
+        for i in range(3):
+            rows.append({"instId": inst, "channel": "candle1m",
+                         "ts": start + pd.Timedelta(minutes=i), "c": float(i)})
+    dolphin = FakeDolphin({"candleConfirmStreamTable": pd.DataFrame(rows)})
+    frame = dolphin.runScript(
+        "select top 2 ts, c, instId from candleConfirmStreamTable "
+        "where channel='candle1m' context by instId csort ts desc"
+    )
+    assert list(frame.columns) == ["ts", "c", "instId"]
+    assert len(frame) == 4  # 每个品种最近 2 根
+    for inst in ("BTC-USDT-SWAP", "ETH-USDT-SWAP"):
+        closes = list(frame[frame["instId"] == inst]["c"])
+        assert closes == [1.0, 2.0]  # 结果按 ts 升序
+    assert list(frame["ts"]) == sorted(frame["ts"])
+
+
+def test_fake_dolphin_exec_max(tables):
+    dolphin = FakeDolphin(tables)
+    value = dolphin.runScript("exec max(ts) from shareTickTable")
+    assert value == pd.Timestamp("2026-01-01 00:00:00")
+
+
 class OfflineStrategy(Strategy):
     instIds = {"BTC-USDT-SWAP"}
 
@@ -119,7 +165,8 @@ def test_strategy_trades_offline_with_fake_api(tables):
 def test_trader_uses_product_table_before_rest(tables):
     tables = dict(tables)
     tables["productStreamTable"] = pd.DataFrame([
-        {"instId": "BTC-USDT-SWAP", "lotSz": 0.1, "minSz": 0.1, "tickSz": 0.01},
+        {"instId": "BTC-USDT-SWAP", "lotSz": 0.1, "minSz": 0.1,
+         "tickSz": 0.01, "ctVal": 0.01},
     ])
     api = FakeApi()  # 无 instruments：若走 REST 回退会因无规格而失败
     kernel = Kernel(
