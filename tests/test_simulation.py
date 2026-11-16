@@ -1,0 +1,131 @@
+"""离线模拟工具测试：FakeDolphin / FakeApi 支持不连库不联网跑策略。"""
+import pandas as pd
+import pytest
+
+from tradeflow.kernel import Kernel
+from tradeflow.simulation import FakeApi, FakeDolphin
+from tradeflow.strategy import Strategy
+
+
+@pytest.fixture
+def tables():
+    return {
+        "shareTickTable": pd.DataFrame([
+            {"instId": "BTC-USDT-SWAP", "last": 100.0, "ts": pd.Timestamp("2026-01-01 00:00:00")},
+            {"instId": "ETH-USDT-SWAP", "last": 10.0, "ts": pd.Timestamp("2026-01-01 00:00:00")},
+        ]),
+        "candleIndicatorStreamTable": pd.DataFrame([
+            {"instId": "BTC-USDT-SWAP", "channel": "candle1m",
+             "ts": pd.Timestamp("2026-01-01 00:00:00"), "ma5": 1.0},
+            {"instId": "BTC-USDT-SWAP", "channel": "candle1m",
+             "ts": pd.Timestamp("2026-01-01 00:01:00"), "ma5": 2.0},
+            {"instId": "BTC-USDT-SWAP", "channel": "candle1m",
+             "ts": pd.Timestamp("2026-01-01 00:02:00"), "ma5": 3.0},
+            {"instId": "BTC-USDT-SWAP", "channel": "candle5m",
+             "ts": pd.Timestamp("2026-01-01 00:00:00"), "ma5": 9.0},
+        ]),
+        "shareTickIndicatorTable": pd.DataFrame([
+            {"instId": "BTC-USDT-SWAP", "count5m": 10},
+            {"instId": "ETH-USDT-SWAP", "count5m": 30},
+        ]),
+    }
+
+
+def test_fake_dolphin_query_patterns(tables):
+    dolphin = FakeDolphin(tables)
+    frame = dolphin.runScript("shareTickTable")
+    assert set(frame["instId"]) == {"BTC-USDT-SWAP", "ETH-USDT-SWAP"}
+    count = dolphin.runScript("exec count(*) from shareTickTable")
+    assert count == 2
+    instids = dolphin.runScript(
+        "exec instId from shareTickIndicatorTable order by count5m desc limit 1"
+    )
+    assert list(instids) == ["ETH-USDT-SWAP"]
+    filtered = dolphin.runScript(
+        "select * from candleIndicatorStreamTable where channel='candle5m'"
+    )
+    assert len(filtered) == 1
+
+
+def test_fake_dolphin_rejects_unknown_script(tables):
+    dolphin = FakeDolphin(tables)
+    with pytest.raises(NotImplementedError):
+        dolphin.runScript("select ts, price from someUnknownTable context by x")
+
+
+class OfflineStrategy(Strategy):
+    instIds = {"BTC-USDT-SWAP"}
+
+    def __init__(self, kernel):
+        super().__init__(kernel)
+        self.scanned = False
+        self.snapshot = {}
+
+    def preinit(self):
+        pass
+
+    def init(self):
+        pass
+
+    def unsubscribeTable(self):
+        pass
+
+    def dropStreamTable(self):
+        pass
+
+    def dropStreamEngine(self):
+        pass
+
+    def scan(self):
+        self.scanned = True
+        self.snapshot["ticks"] = self.getLastTicks()
+        indicator = self.getCandleIndicator(limit=2, channel="candle1m")
+        self.snapshot["ma5"] = list(indicator["BTC-USDT-SWAP"]["ma5"])
+        self.snapshot["top"] = self.kernel.getTradeInstid(limit=1)
+
+
+def test_strategy_runs_offline_with_fake_environment(tables):
+    kernel = Kernel(
+        flag="1", private=False, warmup=0, instIds=set(),
+        dolphin=FakeDolphin(tables), api=FakeApi(),
+    )
+    kernel.addStrategy(OfflineStrategy)
+    kernel.run()
+    strategy = kernel.strategies[0]
+    assert strategy.scanned is True
+    assert strategy.snapshot["ticks"]["BTC-USDT-SWAP"]["last"] == 100.0
+    # context by ... limit 2 取每个品种最近 2 根，再按 ts 升序
+    assert strategy.snapshot["ma5"] == [2.0, 3.0]
+    assert strategy.snapshot["top"] == ["ETH-USDT-SWAP"]
+
+
+def test_strategy_trades_offline_with_fake_api(tables):
+    api = FakeApi(instruments={
+        "BTC-USDT-SWAP": {"instId": "BTC-USDT-SWAP", "lotSz": "0.1",
+                          "minSz": "0.1", "tickSz": "0.01"},
+    })
+    kernel = Kernel(
+        flag="1", private=False, warmup=0, instIds=set(),
+        dolphin=FakeDolphin(tables), api=api,
+    )
+    kernel.addStrategy(OfflineStrategy)
+    kernel.run()
+    strategy = kernel.strategies[0]
+    packet = strategy.buy("BTC-USDT-SWAP", 1.23)
+    assert packet["code"] == "0"
+    assert api.trade.orders[0]["sz"] == "1.2"
+
+
+def test_trader_uses_product_table_before_rest(tables):
+    tables = dict(tables)
+    tables["productStreamTable"] = pd.DataFrame([
+        {"instId": "BTC-USDT-SWAP", "lotSz": 0.1, "minSz": 0.1, "tickSz": 0.01},
+    ])
+    api = FakeApi()  # 无 instruments：若走 REST 回退会因无规格而失败
+    kernel = Kernel(
+        flag="1", private=False, warmup=0, instIds=set(),
+        dolphin=FakeDolphin(tables), api=api,
+    )
+    packet = kernel.trader.buy("BTC-USDT-SWAP", 2.34)
+    assert packet["code"] == "0"
+    assert api.trade.orders[0]["sz"] == "2.3"

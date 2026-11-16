@@ -30,7 +30,7 @@ class MyStrategy(Strategy):
     def scan(self): ...
 
 
-kernel = Kernel(flag="1")  # flag="1" 模拟盘，"0" 实盘
+kernel = Kernel(flag="1")  # flag="1" 模拟盘（默认），"0" 实盘（启动会打印警告）
 kernel.addStrategy(MyStrategy)
 kernel.start()
 ```
@@ -52,6 +52,8 @@ python -m strategy.example
 | `options` | False | 订阅期权频道（opt-summary / option-trades / estimated-price） |
 | `algo` | False | 订阅策略委托频道（orders-algo / algo-advance） |
 | `recreate_tables` | False | prepare() 时删除重建全部流表（**会清空流表数据**，升级/开发用） |
+| `max_errors` | 10 | 策略连续异常多少次后自动停用（成功一次即清零） |
+| `dolphin` / `api` | None | 依赖注入（离线测试用 `FakeDolphin` / `FakeApi`） |
 
 动态订阅（不重启进程）：
 
@@ -87,6 +89,8 @@ TradeFlow/
 │   │   └── format.py           # 订阅数据格式化纯函数（时间/空串/列对齐）
 │   ├── kernel.py               # 核心调度组件
 │   ├── strategy.py             # 策略基类
+│   ├── trade.py                # 交易便捷层（数量/价格规整 + 下单/平仓）
+│   ├── simulation.py           # 离线开发工具（FakeDolphin / FakeApi）
 │   ├── risk.py                 # 风险管理
 │   ├── indicator.py            # 指标计算
 │   └── setting.py              # 全局配置
@@ -154,7 +158,57 @@ print(json.dumps(kernel.health(), indent=2, ensure_ascii=False))
 ```
 
 返回公共/业务/私有连接的 `connected / last_message_at / reconnect_count / error_count`
-以及写线程 `queue / written / dropped / errors`。
+以及写线程 `queue / written / dropped / errors`；同时包含 `risk.errors`（风控累计异常）
+与 `strategies`（各策略连续异常次数与停用状态）。
+
+## 策略交易便捷层
+
+`kernel.trader`（`tradeflow/trade.py`）对常用交易操作做薄封装，策略内可直接调用：
+
+```python
+class MyStrategy(Strategy):
+    instIds = {"BTC-USDT-SWAP"}
+
+    def scan(self):
+        position = self.getPosition("BTC-USDT-SWAP")   # 快照，无持仓返回 None
+        account = self.getAccount("USDT")               # 资金快照
+        if position is None:
+            self.buy("BTC-USDT-SWAP", 1)                # 市价买入（数量自动规整）
+        else:
+            self.close("BTC-USDT-SWAP")                 # 按快照字段市价平仓
+```
+
+- 数量按合约 `lotSz` 向下取整并校验 `minSz`；限价单价格按 `tickSz` 四舍五入；
+- 自动生成 `clOrdId`（字母数字，≤32 字符），便于与 orders 频道/快照表关联；
+- 合约规格优先读 `productStreamTable`，未命中回退 REST `get_instruments` 并缓存；
+- 返回 OKX REST 原始应答，`code == "0"` 表示请求被接受。
+
+## 离线开发与策略测试
+
+不连 DolphinDB、不连 OKX 也能完整跑策略（`tradeflow/simulation.py`）：
+
+```python
+import pandas as pd
+from tradeflow import Kernel
+from tradeflow.simulation import FakeDolphin, FakeApi
+
+tables = {
+    "shareTickTable": pd.DataFrame([
+        {"instId": "BTC-USDT-SWAP", "last": 100.0,
+         "ts": pd.Timestamp("2026-01-01 00:00:00")},
+    ]),
+}
+kernel = Kernel(flag="1", private=False, warmup=0,
+                dolphin=FakeDolphin(tables), api=FakeApi())
+kernel.addStrategy(MyStrategy)
+kernel.run()          # 策略 init() + scan() 全流程离线执行
+```
+
+- `FakeDolphin` 用 pandas 表模拟 `runScript`，覆盖框架内置查询语句
+  （裸表名 / select / exec count / context by 窗口 / top N 列）；
+  不支持的语句抛 `NotImplementedError`（附原文），可按需扩展；
+- `FakeApi` 的 `trade.orders / trade.closes` 记录下单与平仓调用，便于断言；
+- `Kernel(dolphin=..., api=...)` 为依赖注入入口，正常实盘/模拟运行无需使用。
 
 ## 配置
 
@@ -177,6 +231,16 @@ TRADEFLOW_TEST_DDB=1 TRADEFLOW_TEST_DDB_ALLOW_DROP=1 pytest tests/integration/te
 TRADEFLOW_TEST_DDB=1 pytest tests/integration/test_archive.py -q
 ```
 
+## 从 3.4.0 升级
+
+- `Kernel` 的 `flag` 默认值改为 `'1'`（模拟盘）；依赖"默认实盘"的调用需显式传 `flag='0'`；
+- 新库首次运行无需手工建全表：`prepare()` 会自动创建流引擎依赖的全部表
+  （此前指标表/策略委托表不在建表集合内，新环境首次启动会在建引擎时报错）；
+- `Kernel.run()` 增加异常隔离：单策略异常不再终止进程，连续异常达到
+  `max_errors`（默认 10）次自动停用，其余策略继续运行；
+- 新增 `kernel.trader` 与 `strategy.buy/sell/close/...`、`tradeflow.simulation` 离线工具，
+  均为增量接口，旧代码不受影响。
+
 ## 从 3.3.x 升级
 
 - 表结构变更（时间列统一 TIMESTAMP、`fundingrateStreamTable` 等追加列、新增 14 张表）：
@@ -187,6 +251,22 @@ TRADEFLOW_TEST_DDB=1 pytest tests/integration/test_archive.py -q
 - 断线重连后自动进行 REST 对账（订单/持仓/账户）与 K 线缺口补齐，无需人工干预。
 
 ## 版本记录
+
+## version 3.5.0
+
+- 修复新库首次 `prepare()` 失败：建表集合改为 核心表 ∪ 启用频道表 ∪ 全部流引擎
+  输入/输出表（此前指标表、策略委托表不在其中，建引擎时因表不存在而报错）；
+- `Kernel.run()` 增加异常隔离：单策略/风控异常只记录并跳过本轮，策略连续异常达到
+  `max_errors`（默认 10）次自动停用；`kernel.health()` 新增 `risk.errors` 与
+  `strategies`（连续异常次数/停用状态）；
+- `Kernel` 的 `flag` 默认值改为 `'1'`（模拟盘），`flag='0'` 实盘启动时打印警告；
+- 新增 `tradeflow/trade.py` 交易便捷层：`kernel.trader` 及
+  `Strategy.buy/sell/close/getPosition/getPositions/getAccount`；
+  数量按 `lotSz` 向下取整并校验 `minSz`、价格按 `tickSz` 规整、自动生成 `clOrdId`，
+  合约规格优先读 `productStreamTable`，未命中回退 REST 并缓存；
+- 新增 `tradeflow/simulation.py` 离线开发工具：`FakeDolphin`（pandas 表模拟查询）
+  与 `FakeApi`（记录下单调用）；`Kernel(dolphin=..., api=...)` 支持依赖注入，
+  策略可在不连 DolphinDB / OKX 的情况下完成 init+scan 回归测试。
 
 ## version 3.4.0
 

@@ -4,9 +4,11 @@ from threading import Thread
 
 from .okx.api import Api
 from .risk import RiskManage
+from .trade import Trader
 from .utils.log import get_logger
 from .utils.email import Email
 from .stream.dolphin import Dolphin
+from .stream.engines import ENGINE_NAMES, ENGINE_SPECS
 from .subscribe import PublicSubscribe,CandleSubscribe,PrivateSubscribe,SubscribeManager
 from .subscribe.reconcile import Reconciler
 from .subscribe.channels import (
@@ -30,18 +32,32 @@ CORE_TABLES = {
 }
 
 
+def prepare_table_set(channels) -> set:
+    """建表集合 = 核心表 ∪ 启用频道表 ∪ 全部流引擎的输入/输出表。
+
+    引擎表（如指标表）不隶属任何频道，且部分引擎（策略委托）无条件创建；
+    若不预先建表，新库首次 prepare() 会在建引擎时因表不存在而失败。
+    """
+    tables = set(CORE_TABLES) | tables_for(channels)
+    for spec in ENGINE_SPECS.values():
+        tables.add(spec.source)
+        tables.add(spec.target)
+    return tables
+
+
 class Kernel:
     """ 
     TradeFlow的核心组件,负责管理所有模块及其组件, 包括: 行情订阅、日志输出、风险管理
     和数据库操作等,它还管理所有的策略的运行,统一交易调度等。
     """
-    def __init__(self, pause:int=1, instIds=set(), flag='0', warmup:int=320, private:bool=True,
-                 market=None, depth=None, options=False, algo=False, recreate_tables=False):
+    def __init__(self, pause:int=1, instIds=set(), flag='1', warmup:int=320, private:bool=True,
+                 market=None, depth=None, options=False, algo=False, recreate_tables=False,
+                 max_errors:int=10, dolphin=None, api=None):
         """ kernel对象, 框架核心部分, 高度适配和集成功能
         params:
             pause: 策略轮询间隔（秒）
             instIds: 交易币种集合
-            flag: '0' 实盘 / '1' 模拟盘
+            flag: '0' 实盘 / '1' 模拟盘（默认模拟盘，实盘启动会打印警告）
             warmup: 启动后等待行情/订阅就绪的秒数
             private: 是否订阅私有频道（账户/持仓/订单）
             market: 公共行情频道集合，None 用 DEFAULT_MARKET_CHANNELS
@@ -49,11 +65,15 @@ class Kernel:
             options: 是否订阅期权频道（opt-summary/option-trades/estimated-price）
             algo: 是否订阅策略委托频道（orders-algo/algo-advance）
             recreate_tables: prepare() 时是否删除重建流表（开发环境用，会丢数据）
+            max_errors: 策略连续异常多少次后自动停用（默认 10）
+            dolphin: 可选注入的 DolphinDB 客户端（离线测试用 FakeDolphin）
+            api: 可选注入的 OKX API 客户端（离线测试用 FakeApi）
         """
-        self.api = Api(flag=flag)        # api: 使用okx-rest-api进行低频操作
+        self.api = api if api is not None else Api(flag=flag)  # api: 使用okx-rest-api进行低频操作
         self.email = Email()             # email: 定时发送交易、账户信息
-        self.dolphin = Dolphin()         # dolphin:操作数据库及内存表等
+        self.dolphin = dolphin if dolphin is not None else Dolphin()  # dolphin:操作数据库及内存表等
         self.risk = RiskManage(self)     # risk: 风险管理模块
+        self.trader = Trader(self)       # trader: 交易便捷层（规整数量/价格 + 下单/平仓）
         self.pause = pause               # float: 定期运行停顿时间
         self.warmup = warmup             # int: 启动后等待行情/订阅就绪的秒数
         self.private_enabled = private   # bool: 是否订阅私有频道（账户/持仓/订单）
@@ -67,7 +87,13 @@ class Kernel:
         self.reconciler = Reconciler(self)   # Reconciler: 断线对账（REST 快照覆盖 + K 线补齐）
         self.manager = None              # SubscribeManager: 订阅编排
         self.logger = get_logger()       # logger: 日志记录
+        if str(self.flag) == '0':
+            self.logger.warning(
+                "<Kernel>: 实盘模式（flag='0'）已启用：下单将使用真实资金，请确认密钥与策略逻辑"
+            )
         self.strategies = []             # list: 策略列表
+        self.max_errors = max_errors     # int: 策略连续异常停用阈值
+        self._risk_errors = 0            # int: 风控累计异常次数
         self._active = False             # bool: kernel工作状态
         self._loop = asyncio.new_event_loop()  # 订阅的事件循环
         self._tasks = []                        # 订阅协程句柄, 用于退出时取消
@@ -189,9 +215,8 @@ class Kernel:
         """dolphindb中运行预处理脚本：按频道建表 + 建流引擎"""
         if self.recreate_tables:
             self._cleanup_engines_before_recreate()
-        tables = set(CORE_TABLES) | tables_for(self.enabled_channels())
+        tables = prepare_table_set(self.enabled_channels())
         self.dolphin.prepare_streams(tables, recreate=self.recreate_tables)
-        from .stream.engines import ENGINE_NAMES
         self.dolphin.prepare_engines(ENGINE_NAMES)
 
     def _cleanup_engines_before_recreate(self):
@@ -262,18 +287,53 @@ class Kernel:
         )
 
     def health(self):
-        """ 订阅健康指标（连接状态/重连计数/写队列等），由 SubscribeManager 提供 """
-        return self.manager.health() if self.manager is not None else {}
+        """ 订阅健康指标（连接/重连/写队列）+ 风控与策略运行统计 """
+        stats = self.manager.health() if self.manager is not None else {}
+        stats["risk"] = {"errors": self._risk_errors}
+        stats["strategies"] = {
+            f"{strategy.__class__.__name__}#{index}": {
+                "errors": getattr(strategy, "_error_count", 0),
+                "disabled": bool(getattr(strategy, "disabled", False)),
+            }
+            for index, strategy in enumerate(self.strategies)
+        }
+        return stats
 
     def log(self, msg):
         """ 输出日志 """
         self.logger.info(f"<Kernel>: {msg}")
 
     def run(self):
-        """ 采用循环运行的模式, 巡查交易条件的触发情况 """
-        self.risk.run()
+        """ 采用循环运行的模式, 巡查交易条件的触发情况
+
+        单个策略/风控异常只记录并跳过本轮，不终止主循环；
+        策略连续异常达到 max_errors 次后自动停用（disabled），成功一次即清零。
+        """
+        try:
+            self.risk.run()
+        except Exception:
+            self._risk_errors += 1
+            self.logger.exception("<Kernel>: 风控执行异常，已跳过本轮")
+
         for strategy in self.strategies:
-            strategy.run()
+            if getattr(strategy, "disabled", False):
+                continue
+            try:
+                strategy.run()
+            except Exception:
+                strategy._error_count = getattr(strategy, "_error_count", 0) + 1
+                self.logger.exception(
+                    f"<Kernel>: 策略 {strategy.__class__.__name__} 执行异常"
+                    f"（连续 {strategy._error_count} 次）"
+                )
+                if strategy._error_count >= self.max_errors:
+                    strategy.disabled = True
+                    self.logger.error(
+                        f"<Kernel>: 策略 {strategy.__class__.__name__} 连续异常达到 "
+                        f"{self.max_errors} 次，已自动停用"
+                    )
+            else:
+                strategy._error_count = 0
             
     def start(self):
         """ 启动kernel,遍历运行策略 """

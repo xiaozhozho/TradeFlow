@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 项目概览
 
-TradeFlow：Python 量化交易框架（OKX WebSocket 行情订阅 → DolphinDB 流数据存储 → 策略调度），以第三方包 `tradeflow` 形式提供，当前版本 3.4.0，要求 Python >= 3.10。项目文档、注释、日志均为中文。
+TradeFlow：Python 量化交易框架（OKX WebSocket 行情订阅 → DolphinDB 流数据存储 → 策略调度），以第三方包 `tradeflow` 形式提供，当前版本 3.5.0，要求 Python >= 3.10。项目文档、注释、日志均为中文。
 
 - `tradeflow/` — 发布包（`pip install -e .`，setuptools 仅打包 `tradeflow*`）
 - `strategy/` — 策略工作区，不随包发布（`example.py` 为模板，`check_stream_tables.py` 为落库链路检查脚本）
@@ -50,7 +50,7 @@ OKX WebSocket → Subscribe 基类（subscribe/base.py：收包/心跳/指数退
 
 ### Kernel / Strategy 生命周期
 
-- `Kernel` 关键参数：`flag`（**'0' 实盘 / '1' 模拟盘**，默认 '0'）、`pause`、`warmup`、`private`、`market`、`depth`、`options`、`algo`、`recreate_tables`。
+- `Kernel` 关键参数：`flag`（**'0' 实盘 / '1' 模拟盘，默认 '1' 模拟盘**；实盘启动会打印警告）、`pause`、`warmup`、`private`、`market`、`depth`、`options`、`algo`、`recreate_tables`、`max_errors`（策略连续异常停用阈值，默认 10）；`dolphin`/`api` 为离线测试的依赖注入入口。
 - `kernel.addStrategy(cls)` 实例化策略并合并 `strategy.instIds` 到 `kernel.instIds`。
 - `kernel.start()` → `init()`：`strategy.preinit()` → `prepare()`（按启用频道建流表 + 建引擎）→ `subscribe()` → 设置持仓模式 → `sleep(warmup)`。
 - `Strategy.run()` 首次调用执行 `init()`（只执行一次），之后每次 `scan()`；策略逻辑写在 `scan()`。
@@ -73,6 +73,8 @@ OKX WebSocket → Subscribe 基类（subscribe/base.py：收包/心跳/指数退
 - `subscribe/reconcile.py`：断线后 REST 对账（订单/持仓/账户）+ K 线缺口补齐。
 - `subscribe/orderbook.py`：`books` 增量盘口序号校验。
 - `subscribe/legacy.py`：旧实现，仅为兼容保留，新代码不依赖。
+- `trade.py`：`kernel.trader` 交易便捷层——数量按 `lotSz` 向下取整并校验 `minSz`、价格按 `tickSz` 规整、自动生成 `clOrdId`；合约规格优先读 `productStreamTable`，未命中回退 REST 并缓存。`Strategy` 暴露 `buy/sell/close/getPosition(s)/getAccount` 薄封装。
+- `simulation.py`：离线开发工具 `FakeDolphin`（pandas 表模拟 `runScript` 常见查询，未覆盖语句抛 `NotImplementedError`）与 `FakeApi`（记录下单/平仓调用）。配合 `Kernel(dolphin=..., api=...)` 注入，可不连 DolphinDB / OKX 跑完整策略。
 - `stream/archive.py`：tick/trade 归档到 `dfs://market`。docstring 里列的 DolphinDB 写法约束均为 3.00.6 实测结论（如 COMPO 需两个子域、必须函数式 `createPartitionedTable`、handler 不能引用全局变量），改动前先读。
 - `stream/dolphin.py`：`Dolphin` 是单例（`__new__` + `_initialized` 守卫），脚本执行加锁；其他线程必须用 `dolphin.newSession()` 而非共享 session。
 - `tradeflow/__init__.py` 用 `__getattr__` 懒加载 `Kernel/Strategy/get_logger`，避免 `import tradeflow` 加载全部依赖；`OKX_FORCE_IPV4` 开启时在包导入时 patch `socket.getaddrinfo`（仅作用于 okx.com 域名）。
@@ -80,6 +82,9 @@ OKX WebSocket → Subscribe 基类（subscribe/base.py：收包/心跳/指数退
 ## 关键约定与易踩坑
 
 - 时间语义：全库统一 **UTC-naive TIMESTAMP**（OKX 毫秒时间戳），不要写入本地时间。
+- `Kernel.run()` 对风控与每个策略做异常隔离：异常只记录并跳过本轮，策略连续异常达 `max_errors` 自动停用（成功一次清零），计数在 `health()["strategies"]` / `health()["risk"]`。
+- `prepare()` 的建表集合 = 核心表 ∪ 启用频道表 ∪ **全部流引擎 source/target 表**（引擎表不隶属任何频道，必须无条件创建，否则新库首次启动会在建引擎时失败）。
+- `flag` 默认 `'1'`（模拟盘）；`'0'` 实盘在 Kernel 构造时打印警告。
 - `recreate_tables=True` 会清空全部流表；重建前 Kernel 会先摘除流引擎订阅（活跃订阅会阻塞 `dropStreamTable`）。
 - OKX WebSocket 统一 443 端口（8443 已于 2026-10-31 停用）。
 - 版本号在 `pyproject.toml` 与 `tradeflow/__init__.py`（`__version__`）两处维护，发版时同步；README 的"版本记录"逐版本追加。

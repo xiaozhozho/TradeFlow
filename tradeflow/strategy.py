@@ -10,6 +10,8 @@ class Strategy:
     def __init__(self, kernel:Kernel) -> None:
         self.kernel = kernel
         self._active = False
+        self.disabled = False    # 连续异常达到 kernel.max_errors 后由 Kernel 停用
+        self._error_count = 0    # 连续异常次数（成功一次即清零）
 
     def log(self, msg:str):
         """ Log a message to the kernel"""
@@ -50,6 +52,32 @@ class Strategy:
         """获取tick级别的最新指标"""
         lastTickIndicator = self.kernel.dolphin.runScript('shareTickIndicatorTable').set_index('instId').T.to_dict()
         return lastTickIndicator
+
+    # ***********   交易便捷方法（薄封装：kernel.trader -> okx SDK）   ***********
+
+    def buy(self, instId, sz, px=None, **kwargs):
+        """买入（默认市价）；sz/px 自动按合约规格规整，返回 OKX 原始应答。"""
+        return self.kernel.trader.buy(instId, sz, px=px, **kwargs)
+
+    def sell(self, instId, sz, px=None, **kwargs):
+        """卖出（默认市价）；reduceOnly=True 表示只减仓。"""
+        return self.kernel.trader.sell(instId, sz, px=px, **kwargs)
+
+    def close(self, instId, **kwargs):
+        """按仓位快照平仓（与 RiskManage 相同的 close_positions 通道）。"""
+        return self.kernel.trader.close(instId, **kwargs)
+
+    def getPosition(self, instId):
+        """该品种的持仓快照（无持仓返回 None）。"""
+        return self.kernel.trader.getPosition(instId)
+
+    def getPositions(self, instId=None):
+        """持仓快照列表（可按品种过滤）。"""
+        return self.kernel.trader.getPositions(instId)
+
+    def getAccount(self, ccy=None):
+        """账户资金快照（ccy=None 返回全部币种）。"""
+        return self.kernel.trader.getAccount(ccy)
 
     @abstractmethod
     def unsubscribeTable(self):
