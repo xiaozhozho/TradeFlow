@@ -13,11 +13,16 @@
 ## 目录内容
 
 - `Account.py`、`Trade.py`、`MarketData.py` 等：**与上游保持一致，请勿直接修改**，
-  便于后续整体覆盖升级。例外：`Affiliate.py` 的 `from okx.xxx` 绝对导入已改为相对
-  导入，否则作为 `TradeFlow.okx` 子包使用时无法加载（上游以顶层包 `okx` 发布，
-  内嵌到其他包时必须修正）。
+  便于后续整体覆盖升级。当前本地补丁（均为行为不变、消除废弃告警，升级覆盖后需重放）：
+  1. `Affiliate.py`：`from okx.xxx` 绝对导入改为相对导入，否则作为
+     `TradeFlow.okx` 子包使用时无法加载（上游以顶层包 `okx` 发布）；
+  2. `utils.py` 的 `get_timestamp()`：`datetime.utcnow()` 改为带时区 `now()` 后去掉
+     tzinfo（Python 3.12 起 utcnow 废弃），输出格式不变；
+  3. `okxclient.py` 的 `_request()`：POST 请求体由 `data=` 改为 `content=`
+     （httpx 废弃 `data=<str/bytes>`），线上字节与请求头不变。
 - `api.py`：**本项目新增的适配层**，上游没有。用于把拆分的 API 类聚合为
-  `Api(flag=...)`，供 `kernel.py` 使用。
+  `Api(flag=...)`，供 `kernel.py` 使用；其中显式向各 API 传
+  `use_server_time=None`，避免 `CopyTradingAPI` 的 `False` 默认值触发废弃告警。
 
 ## 升级方式
 

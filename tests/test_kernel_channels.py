@@ -180,9 +180,11 @@ class FakeRiskKernel:
         pass
 
 
-def _position(ratio="-0.5", pos="1"):
-    return {"instId": "BTC-USDT-SWAP", "posSide": "net", "pos": pos,
-            "uplRatio": ratio, "mgnMode": "cross", "ccy": "USDT", "lever": "30"}
+def _position(ratio="-0.5", pos="1", **overrides):
+    row = {"instId": "BTC-USDT-SWAP", "posSide": "net", "pos": pos,
+           "uplRatio": ratio, "mgnMode": "cross", "ccy": "USDT", "lever": "30"}
+    row.update(overrides)
+    return row
 
 
 def test_risk_close_on_max_loss():
@@ -225,3 +227,45 @@ def test_risk_ignores_zero_position():
     risk = RiskManage(kernel)
     risk.run()
     assert kernel.api.trade.calls == []
+
+
+# ---------------- RiskManage 杠杆校正退避 ----------------
+
+class FakeLeverageAPI:
+    def __init__(self):
+        self.calls = []
+
+    def set_leverage(self, lever, mgnMode='cross', instId=''):
+        self.calls.append((lever, mgnMode, instId))
+        raise RuntimeError('no permission')
+
+
+class LeverageKernel:
+    def __init__(self, positions):
+        self._positions = positions
+        self.logger = logging.getLogger('test-lever')
+        self.api = SimpleNamespace(trade=FakeTradeAPI(), account=FakeLeverageAPI())
+
+    def getPositions(self):
+        return [dict(p) for p in self._positions]
+
+    def log(self, msg):
+        pass
+
+
+def test_lever_correction_backs_off_after_failure():
+    kernel = LeverageKernel([_position(lever='10')])
+    risk = RiskManage(kernel)
+    risk.run()
+    risk.run()
+    risk.run()
+    assert len(kernel.api.account.calls) == 1  # 失败后进入退避窗口，不逐秒重试
+
+
+def test_lever_correction_retries_after_backoff_window():
+    kernel = LeverageKernel([_position(lever='10')])
+    risk = RiskManage(kernel)
+    risk.run()
+    risk._lever_retry_at.clear()  # 模拟退避窗口到期
+    risk.run()
+    assert len(kernel.api.account.calls) == 2

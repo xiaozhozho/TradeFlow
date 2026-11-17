@@ -67,6 +67,9 @@ class Api:
             api_key=self.api_key,
             api_secret_key=self.secrete_key,
             passphrase=self.passphrase,
+            # 显式传 None：CopyTradingAPI 的默认值是 False，会让 OkxClient 每次
+            # 构造都发一条 use_server_time 废弃告警（该参数实际不生效）。
+            use_server_time=None,
             flag=self.flag,
             debug=self.debug,
             proxy=proxy,

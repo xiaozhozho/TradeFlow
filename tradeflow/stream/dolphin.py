@@ -2,10 +2,12 @@ import threading
 import time
 import dolphindb as ddb
 from pandas import DataFrame
-from functools import lru_cache
 import dolphindb.settings as keys
 from .script import *
 from ..setting import DOLPHINDB_HOST,DOLPHINDB_PORT,DOLPHINDB_USER,DOLPHINDB_PASSWORD
+from ..utils.log import get_logger
+
+logger = get_logger()
 
 class Dolphin:
     """DolphinDB 数据库管理类,为了避免多个session的切换,考虑使用单例模式"""
@@ -44,13 +46,6 @@ class Dolphin:
         )
         return session
 
-    @lru_cache()
-    def getSession(self, enableAsync=False, isCompress=False, highAvailability=False):
-        """ 获取session  """
-        session = ddb.session(enableASYNC=enableAsync, compress=isCompress, highAvailability=highAvailability, highAvailabilitySites=['localhost:8848'])
-        session.connect(self.host, self.port, self.userid, self.password)
-        return session
-
     def upload(self, var, aliasName):
         """ 上传本地变量到服务端 """
         self.session.upload({aliasName: var})
@@ -63,7 +58,7 @@ class Dolphin:
         """ 清除服务端缓存 """
         script="clearAllCache()"
         self.runScript(script, enableAsync=True)
-        print('All caches have been cleaned up!')
+        logger.info('All caches have been cleaned up!')
 
     def loadText(self, filePath, delimiter=','):
         """ 读取文件内容 """
@@ -134,14 +129,14 @@ missing
         missing = self.runScript(script) or []
         if missing:
             raise RuntimeError(f'流表创建失败: {list(missing)}')
-        print(f"prepared {len(names)} stream tables!")
+        logger.info(f"prepared {len(names)} stream tables!")
 
     def prepare_engines(self, engine_names):
         """按 engines 注册表重建流引擎与订阅。"""
         from .engines import ENGINE_SPECS, create_engine_script
         for name in engine_names:
             self.runScript(create_engine_script(ENGINE_SPECS[name]))
-            print(f"prepared engine {name}!")
+            logger.info(f"prepared engine {name}!")
 
     def data2MemoryTable(self, tableName, *data, enableAsync=False, clearMemory=False):
         """ 将 data: DataFrame or iterable 插入内存表中 """
@@ -175,7 +170,7 @@ missing
             raise ValueError(f'This database of {dbPath} needs to be stored for a long time. Please delete it carefully!')
         if self.session.existsDatabase(dbPath):
             self.session.dropDatabase(dbPath)
-            print(f"{dbPath}: droped"+" successfully!")
+            logger.info(f"{dbPath}: droped successfully!")
 
     def getAllDB(self):
         """ 获取所有数据库情况 """
@@ -200,14 +195,14 @@ missing
             db = self.session.database(dbName=dbName, dbPath=dbPath, partitionType=keys.COMPO, partitions=partitions) 
         else:
             db = self.session.database(dbName=dbName, dbPath=dbPath)
-        print(f"{dbPath} created successfully!")
+        logger.info(f"{dbPath} created successfully!")
         return db
 
     def createPartitionedTable(self, db, tableName, partitionColumns, data):
         """ 创建分区表 """
         t = self.session.table(data=data)
         db.createPartitionedTable(table=t, tableName=tableName, partitionColumns=partitionColumns).append(t)
-        print(f"created {tableName}!")
+        logger.info(f"created {tableName}!")
 
     def unsubscribeTable(self, tableName, actionName):
         """取消所有流数据表的订阅"""

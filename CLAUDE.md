@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 项目概览
 
-TradeFlow：Python 量化交易框架（OKX WebSocket 行情订阅 → DolphinDB 流数据存储 → 策略调度），以第三方包 `tradeflow` 形式提供，当前版本 3.6.0，要求 Python >= 3.10。项目文档、注释、日志均为中文。
+TradeFlow：Python 量化交易框架（OKX WebSocket 行情订阅 → DolphinDB 流数据存储 → 策略调度），以第三方包 `tradeflow` 形式提供，当前版本 3.6.2，要求 Python >= 3.10。项目文档、注释、日志均为中文。
 
 - `tradeflow/` — 发布包（`pip install -e .`，setuptools 仅打包 `tradeflow*`）
 - `strategy/` — 策略工作区，不随包发布（`example.py` 为落库链路模板，`ma_cross.py` 为 MA5/MA15 交叉模拟盘策略示例，`check_stream_tables.py` 为落库链路检查脚本）
@@ -72,7 +72,8 @@ OKX WebSocket → Subscribe 基类（subscribe/base.py：收包/心跳/指数退
 - `subscribe/handlers/`：packet → Batch 纯函数，`channel_key` 把 `candle1m/5m` 等归一；`dispatch` 兜底异常——任何脏数据不能拖垮连接。数值空串统一走 `utils/format.py` 的 `as_float/as_int`。
 - `subscribe/reconcile.py`：断线后 REST 对账（订单/持仓/账户）+ K 线缺口补齐。
 - `subscribe/orderbook.py`：`books` 增量盘口序号校验。
-- `subscribe/legacy.py`：旧实现，仅为兼容保留，新代码不依赖。
+- `subscribe/__init__.py`：`Subscribe` 为 `base.Subscribe` 的旧名兼容别名（计划 3.7 移除），新代码用 `BaseSubscribe`；`legacy.py` 已删除。
+- `okx/`：上游 python-okx 0.4.4 的 vendored 副本；本地补丁（相对导入、utcnow 修复、`data=`→`content=`、`api.py` 聚合层传 `use_server_time=None`）记录在 `okx/UPSTREAM.md`，整体覆盖升级时需重放。
 - `stream/indicators.py`：声明式指标——`Strategy.indicators = {"ma": [5,15], "rsi": [14], ...}` 在 `prepare()` 时自动生成 `indicator_<Cls>StreamTable` + `share<Cls>IndicatorTable` + `<Cls>IndicatorEngine`。表达式模板只用 DDB 内置滚动函数；`ta::rsi/atr/boll` 在 3.00.6 不存在，但 `prev()` 在 reactive engine 中可用（RSI/ATR 依赖它，已实测）。
 - `trade.py`：`kernel.trader` 交易便捷层——数量按 `lotSz` 向下取整并校验 `minSz`、价格按 `tickSz` 规整、自动生成 `clOrdId`；合约规格（含 `ctVal`）优先读 `productStreamTable`，未命中回退 REST 并缓存；`sizeByMargin`（保证金→张数，校验 `max_order_margin`/`max_position_margin`）、`batchBuy/batchSell`（20/批）、`cancel`。`Strategy` 暴露 `buy/sell/buyByMargin/sellByMargin/close/getPosition(s)/getAccount` 薄封装。
 - `strategy.py` 数据访问方法：`getBars`（已收盘 K 线，按品种升序去重）、`getTick`、`getIndicators`（声明指标后读策略专属表，否则读默认指标表）、`getBook`（最新盘口快照）、`getOrders`。策略不应手写 DolphinDB SQL。
@@ -89,6 +90,7 @@ OKX WebSocket → Subscribe 基类（subscribe/base.py：收包/心跳/指数退
 - `Kernel.run()` 对风控与每个策略做异常隔离：异常只记录并跳过本轮，策略连续异常达 `max_errors` 自动停用（成功一次清零），计数在 `health()["strategies"]` / `health()["risk"]`；`health()["freshness"]` 给出 tick/1m K 线数据时效（秒）。
 - `prepare()` 的建表集合 = 核心表 ∪ 启用频道表 ∪ **全部流引擎 source/target 表**（引擎表不隶属任何频道，必须无条件创建，否则新库首次启动会在建引擎时失败）。
 - `flag` 默认 `'1'`（模拟盘）；`'0'` 实盘在 Kernel 构造时打印警告。
+- `RiskManage` 的杠杆校正带 30 秒退避（`lever_retry_seconds`）：同一合约失败/成功后窗口内不重复发 REST。
 - `recreate_tables=True` 会清空全部流表；重建前 Kernel 会先摘除流引擎订阅（活跃订阅会阻塞 `dropStreamTable`）。
 - OKX WebSocket 统一 443 端口（8443 已于 2026-10-31 停用）。
 - 版本号在 `pyproject.toml` 与 `tradeflow/__init__.py`（`__version__`）两处维护，发版时同步；README 的"版本记录"逐版本追加。

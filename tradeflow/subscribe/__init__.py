@@ -8,15 +8,15 @@
 - ``private.py``  私有连接（需登录）与策略委托连接
 - ``manager.py``  多连接编排 + 共享 StreamWriter
 - ``writer.py``   后台批量写 DolphinDB
-- ``legacy.py``   旧实现（兼容保留，逐步退役）
+- ``reconcile.py`` 断线 REST 对账 + K 线缺口补齐
 
 兼容性：``PublicSubscribe / CandleSubscribe / PrivateSubscribe`` 等旧入口
-继续从这里导出，现在指向新实现；``Subscribe`` 仍指向旧基类以兼容
-``isinstance`` 等潜在用法，新基类以 ``BaseSubscribe`` 导出。
+继续从这里导出；``Subscribe`` 保留为 ``base.Subscribe`` 的旧名别名
+（计划 3.7 移除），新代码请使用 ``BaseSubscribe``。
 """
-from .legacy import ACCOUNT_COLUMNS, Subscribe, toNumeric  # noqa: F401
+from .base import Subscribe  # noqa: F401  (旧名兼容别名，3.7 移除)
 from .base import Subscribe as BaseSubscribe  # noqa: F401
-from .public import CandleSubscribe, PublicSubscribe  # noqa: F401  (覆盖 legacy)
+from .public import CandleSubscribe, PublicSubscribe  # noqa: F401
 from .private import BusinessPrivateSubscribe, PrivateSubscribe  # noqa: F401
 from .writer import StreamWriter  # noqa: F401
 from .manager import SubscribeManager  # noqa: F401
@@ -42,6 +42,4 @@ __all__ = [
     "CHANNEL_SPECS", "ChannelSpec", "get_channel_spec", "tables_for",
     "DEFAULT_MARKET_CHANNELS", "DEFAULT_CANDLE_CHANNELS",
     "DEFAULT_PRIVATE_CHANNELS", "DEFAULT_ALGO_CHANNELS",
-    # 兼容旧接口
-    "ACCOUNT_COLUMNS", "toNumeric",
 ]

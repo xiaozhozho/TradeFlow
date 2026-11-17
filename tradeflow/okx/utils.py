@@ -49,7 +49,9 @@ def parse_params_to_str(params):
 
 
 def get_timestamp():
-    now = datetime.datetime.utcnow()
+    # 本地补丁：utcnow() 在 Python 3.12 起废弃；用带时区的 now() 后去掉 tzinfo，
+    # 保持与原实现完全一致的 naive UTC ISO 字符串 + "Z" 格式。
+    now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
     t = now.isoformat("T", "milliseconds")
     return t + "Z"
 

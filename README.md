@@ -1,6 +1,6 @@
 # TradeFlow
 
-![version](https://img.shields.io/badge/version-3.6.0-blue)
+![version](https://img.shields.io/badge/version-3.6.2-blue)
 ![python](https://img.shields.io/badge/python-%3E%3D3.10-blue)
 ![dolphindb](https://img.shields.io/badge/DolphinDB-3.00.6%2B-orange)
 ![okx](https://img.shields.io/badge/market-OKX%20V5-black)
@@ -410,8 +410,7 @@ TradeFlow/
 │   │   ├── manager.py          # 多连接编排 + 共享 StreamWriter
 │   │   ├── writer.py           # 后台批量写 DolphinDB
 │   │   ├── reconcile.py        # 断线 REST 对账 + K 线缺口补齐
-│   │   ├── orderbook.py        # 增量盘口与序号校验（books）
-│   │   └── legacy.py           # 旧实现（兼容保留）
+│   │   └── orderbook.py        # 增量盘口与序号校验（books）
 │   ├── stream/                 # DolphinDB 连接、表结构与引擎
 │   │   ├── schema.py           # 流表/快照表结构唯一来源（TableSpec）
 │   │   ├── engines.py          # 流引擎定义（快照/响应式状态/时间序列）
@@ -464,6 +463,24 @@ TradeFlow/
 - 断线重连后自动进行 REST 对账（订单/持仓/账户）与 K 线缺口补齐，无需人工干预。
 
 ## 版本记录
+
+### version 3.6.2
+
+- 修复 Python 3.12 下运行策略时的废弃告警（行为不变）：
+  `okx/utils.py` 的 `datetime.utcnow()` 改为带时区 `now()` 后去 tzinfo（ISO+Z 格式不变）；
+  `okxclient` 的 POST 请求体由 `data=` 改为 httpx 推荐的 `content=`（线上字节与请求头不变）；
+- `Api` 显式向各 API 类传 `use_server_time=None`，消除每次构造 Kernel 时的废弃告警
+  （此前来自 `CopyTradingAPI` 的 `False` 默认值）；
+- 新增 `tests/test_okx_compat.py` 防回归；okx 本地补丁记录于 `okx/UPSTREAM.md`。
+
+### version 3.6.1
+
+- 清理历史遗留：删除 `subscribe/legacy.py`（413 行）与 `utils/method.py`（历史数据下载脚本）；
+  `Subscribe` 保留为 `base.Subscribe` 的旧名别名（计划 3.7 移除），
+  构造 Kernel 不再附带创建多余的 REST 客户端；
+- 日志统一：DolphinDB / 归档 / 邮件模块的 print 输出改为 logger（写入脚本日志文件）；
+- `RiskManage` 杠杆校正增加 30 秒退避：设置失败时不再逐秒重试刷 REST；
+- 删除死代码（`Dolphin.getSession`、Strategy 未使用导入），移除 tqdm 依赖。
 
 ### version 3.6.0
 

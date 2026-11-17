@@ -30,7 +30,7 @@ class Email:
             server.login(self.sender,self.password)
             server.sendmail(self.sender, self.receiver, message.as_string())
             server.quit()
-            print(f"Send text email to {self.receiver} success!")
+            logger.info(f"Send text email to {self.receiver} success!")
         except smtplib.SMTPException as e:
             logger.info(f"<Email>: ERROR:{e}")
 
@@ -56,6 +56,6 @@ class Email:
             server.login(self.sender,self.password)
             server.sendmail(self.sender, self.receiver, message.as_string())
             server.quit()
-            print(f"Send image email to {self.receiver} success!")
+            logger.info(f"Send image email to {self.receiver} success!")
         except smtplib.SMTPException as e:
             logger.info(f"<Email>: ERROR:{e}")

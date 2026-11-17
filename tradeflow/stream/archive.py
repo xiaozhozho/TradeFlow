@@ -15,6 +15,10 @@
 """
 from __future__ import annotations
 
+from ..utils.log import get_logger
+
+logger = get_logger()
+
 ARCHIVE_DB = "dfs://market"
 
 ARCHIVE_DB_SCRIPT = """
@@ -63,4 +67,4 @@ def ensure_archive(dolphin=None) -> None:
             persistOffset=true
         )
         """)
-        print(f"archived {table} -> {ARCHIVE_DB}/{target}!")
+        logger.info(f"archived {table} -> {ARCHIVE_DB}/{target}!")

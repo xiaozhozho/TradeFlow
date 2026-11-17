@@ -54,7 +54,8 @@ class OkxClient(Client):
         if method == c.GET:
             response = self.get(request_path, headers=header)
         elif method == c.POST:
-            response = self.post(request_path, data=body, headers=header)
+            # 本地补丁：httpx 已废弃 data=<str/bytes>，改用 content=（请求体与请求头不变）
+            response = self.post(request_path, content=body, headers=header)
         return response.json()
 
     def _request_without_params(self, method, request_path):

@@ -1,20 +1,26 @@
+import time
+
 from .setting import LEVER, MAX_LOSS, MAX_PROFIT
 from .utils.format import as_float
 
 
 class RiskManage:
     """ 风险管理模块：杠杆校正 + 绝对止损/止盈"""
+    lever_retry_seconds = 30  # 杠杆校正的重试间隔（秒），避免失败时逐秒刷 REST
+
     def __init__(self, kernel, posMode='net_mode', mgnMode='cross', lever=LEVER, maxLoss=MAX_LOSS, maxProfit=MAX_PROFIT, pause=1) -> None:
-        self.kernel = kernel 
+        self.kernel = kernel
         self.posMode = posMode
         self.mgnMode = mgnMode
         self.lever = lever
-        self.maxLoss = maxLoss 
+        self.maxLoss = maxLoss
         self.maxProfit = maxProfit
         self.pause = pause
         self._active = True
         # 已发出平仓请求、等待仓位消失的 (instId, posSide) 集合，避免逐秒重复发单
         self._closing = set()
+        # {instId: monotonic 到期时间}：杠杆校正退避窗口
+        self._lever_retry_at = {}
 
     def log(self, msg) -> None:
         self.kernel.logger.info(f'<Risk>: {msg}')   
@@ -31,13 +37,16 @@ class RiskManage:
                 # 仓位已消失，解除平仓抑制
                 self._closing.discard(key)
                 continue
-            # 调节杠杆
+            # 调节杠杆（带退避：同一合约 lever_retry_seconds 内只尝试一次）
             lever = as_float(position.get('lever'))
             if lever != self.lever:
-                try:
-                    self.kernel.api.account.set_leverage(self.lever, mgnMode='cross', instId=instId)
-                except Exception as e:
-                    self.log(e)
+                now = time.monotonic()
+                if now >= self._lever_retry_at.get(instId, 0.0):
+                    self._lever_retry_at[instId] = now + self.lever_retry_seconds
+                    try:
+                        self.kernel.api.account.set_leverage(self.lever, mgnMode='cross', instId=instId)
+                    except Exception as e:
+                        self.log(f'lever {instId}: {e}')
 
             if key in self._closing:
                 # 平仓请求已发出，等待仓位归零，不再重复发单
